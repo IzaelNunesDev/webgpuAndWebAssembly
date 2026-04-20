@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-export type ControlMode = 'onFoot' | 'shipHelm' | 'swimming' | 'freeCamera';
+export type ControlMode = 'onFoot' | 'shipHelm' | 'mastControl' | 'swimming' | 'freeCamera';
 
 export type WaveDefinition = {
     direction: THREE.Vector2;

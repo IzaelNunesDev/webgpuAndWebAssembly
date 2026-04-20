@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import type { WaveDefinition } from './types';
 
+// Wind blowing toward ~East-Southeast
+export const WIND = { x: 0.85, z: 0.30, speed: 7.0 };
+
 export const DEFAULT_WAVES: WaveDefinition[] = [
     { direction: new THREE.Vector2(1.0, 0.0).normalize(), steepness: 0.18, wavelength: 26.0, speed: 0.92 },
     { direction: new THREE.Vector2(0.92, 0.18).normalize(), steepness: 0.15, wavelength: 18.0, speed: 1.03 },
