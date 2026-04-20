@@ -1,0 +1,84 @@
+:root {
+    color-scheme: dark;
+    --bg-top: #7aaed1;
+    --bg-bottom: #09121b;
+    --panel: rgba(7, 15, 24, 0.68);
+    --panel-border: rgba(173, 216, 230, 0.15);
+    --text: #f5fbff;
+    --muted: #a6c8d7;
+    --active: #72f2af;
+    --warning: #ffd06c;
+}
+
+html, body {
+    margin: 0;
+    min-height: 100%;
+    overflow: hidden;
+    background:
+        radial-gradient(circle at top, rgba(174, 224, 255, 0.35), transparent 32%),
+        linear-gradient(180deg, var(--bg-top) 0%, #1b4967 28%, var(--bg-bottom) 100%);
+}
+
+body {
+    font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+    color: var(--text);
+}
+
+canvas {
+    display: block;
+}
+
+#ui {
+    position: absolute;
+    top: 18px;
+    left: 18px;
+    width: min(380px, calc(100vw - 36px));
+    padding: 16px 18px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 18px;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+    pointer-events: none;
+}
+
+#hud-title {
+    margin: 0 0 10px;
+    font-size: clamp(2rem, 3.2vw, 3.3rem);
+    line-height: 0.95;
+    letter-spacing: -0.04em;
+}
+
+.hud-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 18px;
+    margin: 6px 0;
+    color: var(--muted);
+}
+
+.hud-row strong {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.hud-row span:last-child {
+    color: var(--text);
+}
+
+#hint-status {
+    margin-top: 12px;
+    font-size: 0.95rem;
+    line-height: 1.35;
+    color: #d4ebf6;
+}
+
+#engine-status.active {
+    color: var(--active);
+    font-weight: 700;
+}
+
+#engine-status.warning {
+    color: var(--warning);
+    font-weight: 700;
+}
