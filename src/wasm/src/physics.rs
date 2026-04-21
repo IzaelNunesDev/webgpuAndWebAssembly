@@ -22,6 +22,11 @@ pub struct BoatState {
     pub helm: ShipControls,
 }
 
+#[derive(Serialize)]
+pub struct PlayerState {
+    pub position: [f64; 3],
+}
+
 pub struct PhysicsEngine {
     pub rigid_body_set: RigidBodySet,
     pub collider_set: ColliderSet,
@@ -35,7 +40,9 @@ pub struct PhysicsEngine {
     pub ccd_solver: CCDSolver,
     pub gravity: Vector<f64>,
     pub boat_handle: RigidBodyHandle,
+    pub player_handle: Option<RigidBodyHandle>,
     controls: ShipControls,
+    player_input: Vector<f64>,
 }
 
 impl PhysicsEngine {
@@ -82,8 +89,33 @@ impl PhysicsEngine {
             ccd_solver: CCDSolver::new(),
             gravity,
             boat_handle,
+            player_handle: None,
             controls: ShipControls::default(),
+            player_input: vector![0.0, 0.0, 0.0],
         }
+    }
+
+    pub fn spawn_player(&mut self, x: f64, y: f64, z: f64) {
+        if self.player_handle.is_some() { return; }
+
+        let rigid_body = RigidBodyBuilder::dynamic()
+            .translation(vector![x, y, z])
+            .lock_rotations()
+            .additional_mass(80.0)
+            .linear_damping(2.0)
+            .build();
+
+        let handle = self.rigid_body_set.insert(rigid_body);
+        let collider = ColliderBuilder::capsule_y(0.6, 0.3)
+            .friction(0.5)
+            .build();
+        
+        self.collider_set.insert_with_parent(collider, handle, &mut self.rigid_body_set);
+        self.player_handle = Some(handle);
+    }
+
+    pub fn set_player_input(&mut self, x: f64, y: f64, z: f64) {
+        self.player_input = vector![x, y, z];
     }
 
     pub fn set_controls(&mut self, throttle: f64, rudder: f64, sail: f64, anchor: bool) {
@@ -104,6 +136,16 @@ impl PhysicsEngine {
             speed: linvel.norm(),
             helm: self.controls,
         }
+    }
+
+    pub fn get_player_state(&self) -> Option<PlayerState> {
+        self.player_handle.map(|h| {
+            let player = &self.rigid_body_set[h];
+            let pos = player.translation();
+            PlayerState {
+                position: [pos.x, pos.y, pos.z],
+            }
+        })
     }
 
     pub fn step(&mut self, dt: f64, ocean: &Ocean, time: f64) {
@@ -176,6 +218,29 @@ impl PhysicsEngine {
             0.0,
             -angvel.z * 18000.0 * dt,
         ], true);
+
+        // Player physics
+        if let Some(h) = self.player_handle {
+            let player = &mut self.rigid_body_set[h];
+            
+            // Swim movement: WASD applies forces
+            let swim_force = 4500.0;
+            player.apply_impulse(self.player_input * swim_force * dt, true);
+
+            // Water displacement / buoyancy for player
+            let pos = player.translation();
+            let wave = ocean.sample(pos.x, pos.z, time);
+            let sub = wave.height - pos.y;
+            if sub > 0.0 {
+                // Apply buoyancy proportional to submergence
+                let buoyancy = sub * 1200.0; 
+                player.apply_impulse(vector![0.0, buoyancy * dt, 0.0], true);
+                
+                // Extra drag underwater
+                let vel = *player.linvel();
+                player.apply_impulse(-vel * sub * 5.0 * dt, true);
+            }
+        }
 
         self.physics_pipeline.step(
             &self.gravity,

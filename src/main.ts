@@ -5,8 +5,9 @@ import { Hud } from './game/hud';
 import type { BoatState, ControlMode, PhysicsMessage, ShipControlState } from './game/types';
 import { DEFAULT_WAVES, WIND } from './game/waves';
 import { OceanMaterial } from './render/waterMaterial';
-import { AvatarController } from './game/avatar';
 import { hullMaterial, hullWaterLevel } from './render/hullMaterial';
+import { createRig, updateRig } from './game/sails';
+import { PlayerController } from './game/player';
 import './style.css';
 
 type RendererLike = {
@@ -41,13 +42,11 @@ class OceanEngine {
     private readonly tmpRight = new THREE.Vector3();
     private readonly tmpMove = new THREE.Vector3();
     private readonly oceanSample = { height: 0, normal: [0, 1, 0] as [number, number, number], jacobian: 1 };
-    private readonly shipControls: ShipControlState = { throttle: 0, rudder: 0, sail: 0, anchor: false };
+    private readonly shipControls: ShipControlState = { throttle: 0, rudder: 0, sail: 0.65, anchor: false };
     private readonly boatMesh: THREE.Group;
     private readonly oceanMesh: THREE.Mesh;
-    private readonly avatar: AvatarController;
-    private sailMesh!: THREE.Mesh;
-    private sailGeo!: THREE.PlaneGeometry;
-    private boomMesh: THREE.Mesh | null = null;
+    private readonly player: PlayerController;
+    private rig: any;
     private mode: ControlMode = 'onFoot';
     private yaw = 0;
     private pitch = -0.12;
@@ -74,9 +73,9 @@ class OceanEngine {
         this.hud.setMode(this.mode);
         this.hud.setWind(WIND.x, WIND.z, WIND.speed);
         this.boatMesh = this.createBoat();
-        this.boomMesh = this.boatMesh.getObjectByName('boom') as THREE.Mesh | null;
+        this.rig = createRig(this.boatMesh);
         this.oceanMesh = this.createOcean();
-        this.avatar = new AvatarController(this.scene, this.camera);
+        this.player = new PlayerController(this.scene, this.camera);
 
         this.setupScene();
         this.bindEvents();
@@ -102,14 +101,15 @@ class OceanEngine {
     }
 
     private setupScene() {
-        const ambient = new THREE.AmbientLight(0x7aa0b5, 0.85);
-        const sun = new THREE.DirectionalLight(0xfff2c2, 1.9);
-        sun.position.set(120, 180, 45);
+        const ambient = new THREE.AmbientLight(0x6688aa, 0.4);
+        const sun = new THREE.DirectionalLight(0xfff4e0, 2.5);
+        sun.position.set(100, 80, -50);
+        sun.castShadow = true;
         this.scene.add(ambient, sun);
 
         const sky = new THREE.Mesh(
-            new THREE.SphereGeometry(900, 32, 16),
-            new THREE.MeshBasicMaterial({ color: '#88b9d4', side: THREE.BackSide })
+            new THREE.SphereGeometry(500, 32, 32),
+            new THREE.MeshBasicMaterial({ color: 0x87b6e8, side: THREE.BackSide })
         );
         this.scene.add(sky, this.boatMesh, this.oceanMesh);
 
@@ -161,60 +161,6 @@ class OceanEngine {
             new THREE.MeshStandardMaterial({ color: '#1e100a', roughness: 0.9 }));
         hatch.position.set(-0.5, 1.96, 1.8);
         group.add(hatch);
-
-        // Mast step
-        const mastStep = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.5, 0.5, 10), matMid);
-        mastStep.position.set(0, 2.14, -2.5);
-        group.add(mastStep);
-
-        // Main mast — 16m
-        const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.24, 16, 12), matMid);
-        mast.position.set(0, 10.14, -2.5);
-        group.add(mast);
-
-        // Main yard (verga principal) at ~60% height
-        const mainYard = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 9.5, 8), matMid);
-        mainYard.rotation.z = Math.PI / 2;
-        mainYard.position.set(0, 12.0, -2.5);
-        group.add(mainYard);
-
-        // Gaff (upper spar)
-        const gaff = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 6.5, 8), matMid);
-        gaff.rotation.z = Math.PI / 2;
-        gaff.position.set(0, 14.8, -1.2);
-        group.add(gaff);
-
-        // Boom (lower spar) — rotates as sail trim / direction control
-        const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 8.5, 8), matMid);
-        boom.rotation.z = Math.PI / 2;
-        boom.position.set(0, 2.5, -1.2);
-        boom.name = 'boom';
-        group.add(boom);
-
-        // Mainsail
-        const mainsail = new THREE.Mesh(new THREE.PlaneGeometry(8.5, 11, 12, 12), matSail);
-        mainsail.position.set(0, 8.6, -1.5);
-        group.add(mainsail);
-
-        // Bowsprit (gurupés) angled forward from bow
-        const bowsprit = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.13, 7.5, 8), matMid);
-        bowsprit.rotation.x = Math.PI / 2 - 0.22;
-        bowsprit.position.set(0, 3.1, -13.5);
-        group.add(bowsprit);
-
-        // Jib sail (vela de proa)
-        const jib = new THREE.Mesh(new THREE.PlaneGeometry(3.5, 7.5, 6, 8), matSail);
-        jib.position.set(0, 8.2, -10.5);
-        jib.rotation.y = Math.PI;
-        group.add(jib);
-
-        // Procedural Sail
-        this.sailGeo = new THREE.PlaneGeometry(5, 7, 12, 12);
-        const sailMat = new THREE.MeshStandardMaterial({ color: 0xedeae0, side: THREE.DoubleSide, roughness: 0.85 });
-        this.sailMesh = new THREE.Mesh(this.sailGeo, sailMat);
-        this.sailMesh.position.set(0, 6, -1.5);
-        this.sailMesh.rotation.y = Math.PI;
-        group.add(this.sailMesh);
 
         // Railings — port and starboard along main deck
         for (const side of [-1, 1] as const) {
@@ -271,6 +217,7 @@ class OceanEngine {
                 this.oceanSample.height = event.data.ocean.height;
                 this.oceanSample.normal = event.data.ocean.normal;
                 this.oceanSample.jacobian = event.data.ocean.jacobian;
+                this.player.setPlayerState(event.data.player);
                 this.syncBoatTransform();
                 this.hud.setBoatState(this.boatState);
             }
@@ -307,46 +254,37 @@ class OceanEngine {
         this.updateLook();
         this.updatePlayer(dt);
         this.updateShipControls(dt);
-        this.updateBoom();
 
-        // Avatar updates
+        // Player updates
         const inWater = this.camera.position.y < this.oceanSample.height + 0.3;
-        if (inWater && this.avatar.state === 'deck') this.avatar.setState('swimming');
-        if (!inWater && this.avatar.state === 'swimming') this.avatar.setState('deck');
-        this.avatar.update(dt);
+        if (inWater) {
+            this.player.enterWater(this.worker, this.camera.position, this.renderer as unknown as THREE.Renderer);
+            if (this.mode !== 'swimming') {
+                this.mode = 'swimming';
+                this.hud.setMode(this.mode);
+            }
+        } else if (this.mode === 'swimming') {
+            this.player.exitWater(this.renderer as unknown as THREE.Renderer);
+        }
+
+        this.player.update(dt, this.oceanSample.height, this.scene);
 
         // Hull submersion
         hullWaterLevel.value = this.oceanSample.height;
 
         // Sail updates
-        this.updateSail(this.shipControls, this.boatMesh);
+        updateRig(this.rig, this.shipControls.sail, this.boatMesh);
+
+        const sailStatus = document.getElementById('sail-status');
+        if (sailStatus) {
+            sailStatus.textContent = Math.round(this.shipControls.sail * 100) + '%';
+        }
 
         this.pushControlsToWorker();
     }
 
-    private updateSail(controls: ShipControlState, boat: THREE.Object3D) {
-        const f = THREE.MathUtils.clamp(controls.sail, 0, 1);
-        this.sailMesh.scale.y = 0.15 + f * 0.85;
-
-        const windAngle = Math.atan2(WIND.z, WIND.x);
-        const rel = THREE.MathUtils.euclideanModulo(windAngle - boat.rotation.y + Math.PI, Math.PI * 2) - Math.PI;
-        this.sailMesh.rotation.z = rel * 0.35 * f;
-
-        const pos = this.sailGeo.attributes.position;
-        for (let i = 0; i < pos.count; i++) {
-            const x = pos.getX(i);
-            pos.setZ(i, Math.sin(x * 1.8) * 0.12 * f);
-        }
-        pos.needsUpdate = true;
-
-        const sailStatus = document.getElementById('sail-status');
-        if (sailStatus) {
-            sailStatus.textContent = Math.round(f * 100) + '%';
-        }
-    }
-
     private updateModeTransitions() {
-        if (this.input.triggered('KeyQ')) {
+        if (this.input.triggered('KeyZ')) {
             this.mode = this.mode === 'freeCamera' ? 'onFoot' : 'freeCamera';
             this.hud.setMode(this.mode);
         }
@@ -354,11 +292,11 @@ class OceanEngine {
         if (this.input.triggered('KeyE')) {
             if (this.mode === 'shipHelm') {
                 this.mode = 'onFoot';
-                this.playerLocal.set(0, PLAYER_EYE_HEIGHT + 2.44, 7.5);
+                this.playerLocal.set(0, PLAYER_EYE_HEIGHT + 2.44, 8.5);
                 this.hud.setMode(this.mode);
             } else if (this.mode === 'mastControl') {
                 this.mode = 'onFoot';
-                this.playerLocal.set(0, PLAYER_EYE_HEIGHT + 2.04, -2.5);
+                this.playerLocal.set(0, PLAYER_EYE_HEIGHT + 2.04, -1.5);
                 this.hud.setMode(this.mode);
             } else if (this.mode === 'swimming' && this.isNearBoatLadder()) {
                 this.mode = 'onFoot';
@@ -366,11 +304,11 @@ class OceanEngine {
                 this.hud.setMode(this.mode);
             } else if (this.isNearMast()) {
                 this.mode = 'mastControl';
-                this.playerLocal.set(0, PLAYER_EYE_HEIGHT + 2.04, -2.5);
+                this.playerLocal.set(0, PLAYER_EYE_HEIGHT + 2.04, -1.5);
                 this.hud.setMode(this.mode);
             } else if (this.isNearHelm()) {
                 this.mode = 'shipHelm';
-                this.playerLocal.set(0, PLAYER_EYE_HEIGHT + 2.44, 9.0);
+                this.playerLocal.set(0, PLAYER_EYE_HEIGHT + 2.44, 8.5);
                 this.hud.setMode(this.mode);
             }
         }
@@ -404,7 +342,7 @@ class OceanEngine {
         }
 
         if (this.mode === 'mastControl') {
-            const mastOffset = new THREE.Vector3(0, PLAYER_EYE_HEIGHT + 2.04, -2.5).applyQuaternion(this.boatQuaternion);
+            const mastOffset = new THREE.Vector3(0, PLAYER_EYE_HEIGHT + 2.04, -1.5).applyQuaternion(this.boatQuaternion);
             this.camera.position.copy(this.boatPosition).add(mastOffset);
             return;
         }
@@ -433,18 +371,11 @@ class OceanEngine {
         }
 
         if (this.mode === 'swimming') {
-            this.playerVelocity.x = THREE.MathUtils.damp(this.playerVelocity.x, this.tmpMove.x, 10, dt);
-            this.playerVelocity.z = THREE.MathUtils.damp(this.playerVelocity.z, this.tmpMove.z, 10, dt);
-
-            if (this.input.triggered('Space')) {
-                this.playerVelocity.y = -1.4;
-            } else {
-                const targetYVelocity = 0.65;
-                this.playerVelocity.y = THREE.MathUtils.damp(this.playerVelocity.y, targetYVelocity, 2.5, dt);
+            // Physics handled by PlayerController and Worker
+            if (this.player.getState()) {
+                const pos = this.player.getState()!.position;
+                this.playerWorld.set(pos[0], pos[1], pos[2]);
             }
-
-            this.playerWorld.addScaledVector(this.playerVelocity, dt);
-            this.playerWorld.y = Math.max(this.playerWorld.y, this.oceanSample.height + 0.18);
         } else {
             this.playerVelocity.x = this.tmpMove.x;
             this.playerVelocity.z = this.tmpMove.z;
@@ -468,8 +399,7 @@ class OceanEngine {
             }
 
             if (this.playerWorld.distanceTo(this.boatPosition) > 22 || this.playerWorld.y < this.oceanSample.height + 0.6) {
-                this.mode = 'swimming';
-                this.hud.setMode(this.mode);
+                // Fall handled by enterWater in update()
             }
         }
 
@@ -512,9 +442,17 @@ class OceanEngine {
                 this.shipControls.anchor = !this.shipControls.anchor;
             }
         } else if (this.mode === 'mastControl') {
-            // W/S sobe/desce vela · A/D gira boom (direção)
+            // Q/E sobe/desce vela · A/D gira leme
+            if (this.input.triggered('KeyE')) {
+                this.shipControls.sail = Math.min(1.0, this.shipControls.sail + 0.1);
+            }
+            if (this.input.triggered('KeyQ')) {
+                this.shipControls.sail = Math.max(0.0, this.shipControls.sail - 0.1);
+            }
+            // W/S também sobe/desce vela de forma contínua
             const sailDelta = this.input.axis('KeyS', 'KeyW');
-            this.shipControls.sail = THREE.MathUtils.clamp(this.shipControls.sail + sailDelta * dt, 0, 1);
+            this.shipControls.sail = THREE.MathUtils.clamp(this.shipControls.sail + sailDelta * dt * 0.8, 0, 1);
+            
             this.shipControls.rudder = this.input.axis('KeyD', 'KeyA');
         } else {
             // Sem controle ativo — leme volta ao centro gradualmente
@@ -522,29 +460,22 @@ class OceanEngine {
         }
     }
 
-    private updateBoom() {
-        if (this.boomMesh) {
-            // Boom swings ±70° based on rudder/sail trim
-            this.boomMesh.rotation.y = THREE.MathUtils.lerp(
-                this.boomMesh.rotation.y,
-                this.shipControls.rudder * 1.2,
-                0.15
-            );
-        }
-    }
-
     private pushControlsToWorker() {
+        const moveX = this.input.axis('KeyA', 'KeyD');
+        const moveZ = this.input.axis('KeyW', 'KeyS');
+        const moveY = this.input.triggered('Space') ? 1.0 : (this.input.pressedNow('KeyC') ? -1.0 : 0.0);
+
         this.worker.postMessage({
             type: 'controls',
             mode: this.mode,
             ship: this.shipControls,
-            player: { x: this.playerWorld.x, y: this.playerWorld.y, z: this.playerWorld.z },
+            playerMove: [moveX, moveY, moveZ],
         });
     }
 
     private isNearMast() {
-        const mastWorld = new THREE.Vector3(0, 2.14, -2.5).applyQuaternion(this.boatQuaternion).add(this.boatPosition);
-        return this.playerWorld.distanceTo(mastWorld) < 2.5;
+        const mastWorld = new THREE.Vector3(0, 2.0, -1.5).applyQuaternion(this.boatQuaternion).add(this.boatPosition);
+        return this.playerWorld.distanceTo(mastWorld) < 4.0;
     }
 
     private isNearHelm() {

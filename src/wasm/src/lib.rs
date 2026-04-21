@@ -34,6 +34,18 @@ impl GameState {
         self.physics.set_controls(throttle, rudder, sail, anchor);
     }
 
+    pub fn spawn_player(&mut self, x: f64, y: f64, z: f64) {
+        self.physics.spawn_player(x, y, z);
+    }
+
+    pub fn set_player_input(&mut self, x: f64, y: f64, z: f64) {
+        self.physics.set_player_input(x, y, z);
+    }
+
+    pub fn get_player_state(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(&self.physics.get_player_state()).unwrap()
+    }
+
     pub fn get_boat_state(&self) -> JsValue {
         serde_wasm_bindgen::to_value(&self.physics.get_boat_state()).unwrap()
     }

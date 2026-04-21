@@ -6,6 +6,7 @@ let simulator = new OceanSimulator();
 let lastTime = performance.now();
 let wasmEnabled = false;
 let pendingControls: ShipControlState = { throttle: 0, rudder: 0, sail: 0.65, anchor: false };
+let playerMoveInput: [number, number, number] = [0, 0, 0];
 
 self.onmessage = async (event) => {
     if (event.data.type === 'init') {
@@ -28,6 +29,16 @@ self.onmessage = async (event) => {
 
     if (event.data.type === 'controls') {
         pendingControls = event.data.ship;
+        if (event.data.playerMove) {
+            playerMoveInput = event.data.playerMove;
+        }
+    }
+
+    if (event.data.type === 'spawnPlayer') {
+        if (wasmEnabled && state) {
+            const { pos } = event.data;
+            state.spawn_player(pos.x, pos.y, pos.z);
+        }
     }
 };
 
@@ -43,14 +54,17 @@ function tick() {
             pendingControls.sail,
             pendingControls.anchor
         );
+        state.set_player_input(playerMoveInput[0], playerMoveInput[1], playerMoveInput[2]);
         state.step(dt);
 
         const boat = state.get_boat_state();
+        const player = state.get_player_state();
         const ocean = state.sample_ocean(boat.transform[0], boat.transform[2]);
         const message: PhysicsUpdate = {
             type: 'update',
             isWasm: true,
             boat,
+            player,
             ocean,
             timestamp: now,
         };

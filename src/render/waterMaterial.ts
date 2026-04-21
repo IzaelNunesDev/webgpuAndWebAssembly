@@ -77,9 +77,10 @@ export class OceanMaterial extends NodeMaterial {
 
         const deepColor = uniform(vec3(0.039, 0.180, 0.290)); // #0a2e4a
         const shallowColor = uniform(vec3(0.118, 0.565, 0.690)); // #1e90b0
+        const sunDir = uniform(new THREE.Vector3(0.6, 0.7, -0.3).normalize());
 
-        const oceanColorFn = wgslFn(`
-            fn getOceanColor(worldPos: vec3f, camPos: vec3f, n: vec3f, deep: vec3f, shallow: vec3f) -> vec3f {
+        const baseColorFn = wgslFn(`
+            fn getBaseColor(worldPos: vec3f, camPos: vec3f, n: vec3f, deep: vec3f, shallow: vec3f) -> vec3f {
                 let viewDir = normalize(camPos - worldPos);
                 let dist = distance(camPos, worldPos);
                 let depth = clamp(dist * 0.015, 0.0, 1.0);
@@ -89,12 +90,28 @@ export class OceanMaterial extends NodeMaterial {
             }
         `);
 
-        this.colorNode = oceanColorFn({
+        const specularFn = wgslFn(`
+          fn spec(n: vec3f, v: vec3f, l: vec3f) -> f32 {
+            let h = normalize(v + l);
+            return pow(max(dot(n, h), 0.0), 120.0);
+          }
+        `);
+
+        const viewDir = cameraPosition.sub(positionWorld).normalize();
+        const baseColor = baseColorFn({
             worldPos: positionWorld,
             camPos: cameraPosition,
             n: normalWorld,
             deep: deepColor,
             shallow: shallowColor
         });
+
+        this.colorNode = baseColor.add(
+            specularFn({ 
+                n: normalWorld, 
+                v: viewDir, 
+                l: sunDir 
+            }).mul(0.3)
+        );
     }
 }

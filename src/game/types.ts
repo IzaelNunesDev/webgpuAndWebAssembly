@@ -29,10 +29,19 @@ export type OceanSample = {
     jacobian: number;
 };
 
+export type PlayerState = {
+    position: [number, number, number];
+};
+
+export type PlayerControlState = {
+    move: [number, number, number];
+};
+
 export type PhysicsUpdate = {
     type: 'update';
     isWasm: boolean;
     boat: BoatState;
+    player?: PlayerState;
     ocean: OceanSample;
     timestamp: number;
 };
