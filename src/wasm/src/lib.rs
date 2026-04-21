@@ -5,29 +5,42 @@ use wasm_bindgen::prelude::*;
 use crate::ocean::Ocean;
 use crate::physics::PhysicsEngine;
 
+// 120 Hz physics — smooth even on 60 fps displays
+const FIXED_DT: f64 = 1.0 / 120.0;
+
 #[wasm_bindgen]
 pub struct GameState {
-    ocean: Ocean,
-    physics: PhysicsEngine,
-    time: f64,
+    ocean:       Ocean,
+    physics:     PhysicsEngine,
+    time:        f64,
+    accumulator: f64,
 }
 
 #[wasm_bindgen]
 impl GameState {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        let ocean = Ocean::new();
+        let ocean   = Ocean::new();
         let physics = PhysicsEngine::new(&ocean);
         GameState {
             ocean,
             physics,
-            time: 0.0,
+            time:        0.0,
+            accumulator: 0.0,
         }
     }
 
+    /// Called every JS frame with the real wall-clock delta.
+    /// Consumes dt in fixed-size slices so forces are always integrated at FIXED_DT,
+    /// regardless of browser frame rate or jank.  Capped at 0.1 s to prevent
+    /// the spiral-of-death after a tab is backgrounded.
     pub fn step(&mut self, dt: f64) {
-        self.time += dt;
-        self.physics.step(dt, &self.ocean, self.time);
+        self.accumulator += dt.min(0.1);
+        while self.accumulator >= FIXED_DT {
+            self.physics.step_fixed(FIXED_DT, &self.ocean, self.time);
+            self.time        += FIXED_DT;
+            self.accumulator -= FIXED_DT;
+        }
     }
 
     pub fn set_ship_controls(&mut self, throttle: f64, rudder: f64, sail: f64, anchor: bool) {

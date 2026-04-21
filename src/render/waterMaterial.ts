@@ -6,9 +6,7 @@ import {
     float,
     sin,
     cos,
-    sqrt,
     dot,
-    mix,
     clamp,
     positionWorld,
     normalWorld,
@@ -19,11 +17,12 @@ import {
 import * as THREE from 'three';
 import type { WaveDefinition } from '../game/types';
 
-// Gerstner wave displacement node
-const gerstnerWave = (pos: any, direction: any, steepness: any, wavelength: any, speed: any, t: any) => {
-    const k = float(2.0 * 3.14159).div(wavelength);
-    const c = sqrt(float(9.81).div(k)).mul(speed);
-    const f = k.mul(dot(direction, pos).sub(c.mul(t)));
+const OCEAN_DEPTH = 10.0; // metres — must match ocean.rs / oceanFallback.ts
+
+// Gerstner displacement — wave speed includes shallow-water tanh correction.
+// tanhC  = precomputed sqrt(9.81/k * tanh(k*depth)) * speed  (constant per wave)
+const gerstnerWave = (pos: any, direction: any, steepness: any, k: any, tanhC: any, t: any) => {
+    const f = k.mul(dot(direction, pos).sub(tanhC.mul(t)));
     const a = steepness.div(k);
     return vec3(
         direction.x.mul(a).mul(cos(f)),
@@ -36,6 +35,7 @@ export class OceanMaterial extends NodeMaterial {
     constructor(waveData: WaveDefinition[]) {
         super();
 
+        // ── Per-wave uniforms ────────────────────────────────────────────────────
         const directions = uniformArray(
             waveData.map(w => {
                 if (w.direction instanceof THREE.Vector2) return w.direction;
@@ -45,10 +45,23 @@ export class OceanMaterial extends NodeMaterial {
             'vec2'
         );
         const steepnesses = uniformArray(waveData.map(w => w.steepness), 'float');
-        const wavelengths  = uniformArray(waveData.map(w => w.wavelength), 'float');
-        const speeds       = uniformArray(waveData.map(w => w.speed), 'float');
 
-        // Vertex displacement
+        // k = 2π/λ
+        const ks = uniformArray(
+            waveData.map(w => (2 * Math.PI) / w.wavelength),
+            'float'
+        );
+
+        // c = sqrt(9.81/k · tanh(k·depth)) · speed  — computed CPU-side once
+        const tanhCs = uniformArray(
+            waveData.map(w => {
+                const k = (2 * Math.PI) / w.wavelength;
+                return Math.sqrt(9.81 / k * Math.tanh(k * OCEAN_DEPTH)) * w.speed;
+            }),
+            'float'
+        );
+
+        // ── Vertex displacement ──────────────────────────────────────────────────
         const p = positionWorld.xz;
         let finalPos = positionWorld;
         for (let i = 0; i < waveData.length; i++) {
@@ -57,15 +70,31 @@ export class OceanMaterial extends NodeMaterial {
                     p,
                     directions.element(i),
                     steepnesses.element(i),
-                    wavelengths.element(i),
-                    speeds.element(i),
+                    ks.element(i),
+                    tanhCs.element(i),
                     time
                 )
             );
         }
         this.positionNode = finalPos;
 
-        // Color uniforms
+        // ── Jacobian — compression metric for breaking-wave foam ─────────────────
+        // J = 1 - Σ steepness_i · cos(f_i)
+        // J → 0  : crest is very peaky (steep wave)
+        // J < 0  : wave is breaking
+        let jacobian: any = float(1.0);
+        for (let i = 0; i < waveData.length; i++) {
+            const ki  = ks.element(i)         as any;
+            const ci  = tanhCs.element(i)     as any;
+            const si  = steepnesses.element(i) as any;
+            const di  = directions.element(i)  as any;
+            const fi  = ki.mul(dot(di, p).sub(ci.mul(time)));
+            jacobian  = jacobian.sub(si.mul(cos(fi)));
+        }
+        // Clamp to a visible range and pass to fragment
+        const jacobianClamped = clamp(jacobian, float(-1.0), float(1.5));
+
+        // ── Color uniforms ───────────────────────────────────────────────────────
         const deepColor    = uniform(vec3(0.02, 0.10, 0.22));
         const shallowColor = uniform(vec3(0.05, 0.38, 0.55));
         const foamColor    = uniform(vec3(0.88, 0.94, 1.00));
@@ -74,15 +103,16 @@ export class OceanMaterial extends NodeMaterial {
 
         const colorFn = wgslFn(`
             fn oceanColor(
-                worldPos: vec3f,
-                camPos:   vec3f,
-                n:        vec3f,
-                deep:     vec3f,
-                shallow:  vec3f,
-                foam:     vec3f,
-                sun:      vec3f,
-                sunCol:   vec3f,
-                t:        f32
+                worldPos:  vec3f,
+                camPos:    vec3f,
+                n:         vec3f,
+                deep:      vec3f,
+                shallow:   vec3f,
+                foam:      vec3f,
+                sun:       vec3f,
+                sunCol:    vec3f,
+                t:         f32,
+                jacobian:  f32
             ) -> vec3f {
                 let viewDir = normalize(camPos - worldPos);
                 let dist    = distance(camPos, worldPos);
@@ -91,7 +121,7 @@ export class OceanMaterial extends NodeMaterial {
                 let depth = clamp(dist * 0.012, 0.0, 1.0);
                 var base  = mix(shallow, deep, depth);
 
-                // Fresnel — horizonte fica mais reflexivo
+                // Fresnel
                 let nv      = max(dot(n, viewDir), 0.0);
                 let fresnel = pow(1.0 - nv, 4.0);
 
@@ -109,21 +139,18 @@ export class OceanMaterial extends NodeMaterial {
                 // Especular principal (Blinn-Phong)
                 let h1    = normalize(viewDir + sun);
                 let spec1 = pow(max(dot(n, h1), 0.0), 160.0) * sunCol * 0.85;
+                let spec2 = pow(max(dot(n, h1), 0.0), 28.0)  * sunCol * 0.10;
 
-                // Lóbulo largo (clarão difuso)
-                let spec2 = pow(max(dot(n, h1), 0.0), 28.0) * sunCol * 0.10;
+                // ── Espuma baseada no Jacobiano ──────────────────────────────────
+                // J < 0.4 → onda comprimida / quebrando → espuma
+                // smoothstep(0.4, -0.2, J): J=0.4→0, J=0.1→~0.5, J<0→1
+                let foamMask = smoothstep(0.40, -0.20, jacobian);
 
-                // Espuma APENAS nas cristas mais altas (y > ~0.65)
-                // O noise evita bordas retas artificiais
-                let noiseOff = sin(worldPos.x * 1.4 + t * 0.9) * 0.08
-                             + cos(worldPos.z * 1.7 + t * 0.7) * 0.06;
-                let foamMask = smoothstep(0.62, 0.95, worldPos.y + noiseOff);
-
-                // Filamentos finos de espuma (rastros de vento) — muito sutis
+                // Filamentos finos (lace) — variam no tempo para parecerem orgânicos
                 let lace      = abs(sin(worldPos.x * 3.2 + t * 1.3) * cos(worldPos.z * 2.9 + t * 1.0));
                 let laceFoam  = smoothstep(0.78, 0.95, lace) * 0.12 * foamMask;
 
-                return base + spec1 + spec2 + foam * (foamMask * 0.18 + laceFoam);
+                return base + spec1 + spec2 + foam * (foamMask * 0.22 + laceFoam);
             }
         `);
 
@@ -137,11 +164,12 @@ export class OceanMaterial extends NodeMaterial {
             sun:      sunDir,
             sunCol:   sunColor,
             t:        time,
+            jacobian: jacobianClamped,
         }) as any;
 
-        // Opacidade via TSL separada para evitar conflito de tipo
+        // Opacidade depth-based
         const distToCam = cameraPosition.sub(positionWorld).length();
-        this.opacityNode = clamp(mix(float(0.82), float(0.98), distToCam.mul(0.008)), float(0.8), float(1.0)) as any;
+        this.opacityNode = clamp(distToCam.mul(0.008).mul(float(0.98 - 0.82)).add(float(0.82)), float(0.8), float(1.0)) as any;
         this.transparent = true;
     }
 }

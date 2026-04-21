@@ -1,13 +1,14 @@
 import { DEFAULT_WAVES, WIND } from '../game/waves';
 import type { BoatState, OceanSample, ShipControlState } from '../game/types';
 
+const OCEAN_DEPTH      = 10.0;   // metres — must match ocean.rs
 const PHYSICS_LAMBDA_MIN = 12;
 
 export class OceanSimulator {
     time = 0;
     private boat = {
         x: 0,
-        y: 0.1,   // center slightly above waterline so hull visually floats
+        y: 0.1,
         z: 0,
         yaw: 0,
         vx: 0,
@@ -30,10 +31,8 @@ export class OceanSimulator {
         const rightZ = -Math.sin(this.boat.yaw);
         const speed = Math.hypot(this.boat.vx, this.boat.vz);
 
-        // Wind thrust: efficiency depends on angle between wind and bow
         const sailFactor = this.helm.sail;
         const windDotFwd = WIND.x * forwardX + WIND.z * forwardZ;
-        // t=0: headwind (in irons), t=0.5: reaching (fastest), t=1: tailwind (slower)
         const t = (windDotFwd + 1) * 0.5;
         const thrustCoeff = t < 0.15 ? 0 : (0.25 + Math.sin(t * Math.PI) * 0.75);
         const accel = sailFactor * thrustCoeff * WIND.speed * 0.12;
@@ -50,8 +49,6 @@ export class OceanSimulator {
             this.boat.vz = (this.boat.vz / newSpeed) * 5.5;
         }
 
-        // Steering: rudder field carries boom angle (-1..1)
-        // Boom generates turn via sail force + rudder effect
         const windForce = sailFactor * thrustCoeff * WIND.speed;
         const turnRate = this.helm.rudder * (speed * 0.08 + windForce * 0.07);
         this.boat.yawVelocity = this.boat.yawVelocity * Math.max(0, 1 - 3.5 * dt) + turnRate * dt * 8;
@@ -60,7 +57,6 @@ export class OceanSimulator {
         this.boat.x += this.boat.vx * dt;
         this.boat.z += this.boat.vz * dt;
 
-        // 4-probe buoyancy — only long waves (λ > 12m) drive pitch/roll
         const hFore = this.samplePhysicsHeight(this.boat.x + forwardX * 8, this.boat.z + forwardZ * 8);
         const hAft  = this.samplePhysicsHeight(this.boat.x - forwardX * 8, this.boat.z - forwardZ * 8);
         const hPort = this.samplePhysicsHeight(this.boat.x - rightX * 1.8,  this.boat.z - rightZ * 1.8);
@@ -69,8 +65,6 @@ export class OceanSimulator {
         const avgHeight = (hFore + hAft + hPort + hStbd) * 0.25;
         this.boat.y += (avgHeight + 0.1 - this.boat.y) * Math.min(1, dt * 3);
 
-        // Pitch/roll with reduced sensitivity and slow convergence to avoid startup snap
-        // Denominator 24/8 → max pitch ~3.5°, max roll ~8° before clamping
         const targetPitch = -(hFore - hAft) / 24;
         const targetRoll  = (hStbd - hPort) / 8.0;
         this.boat.pitch += (targetPitch - this.boat.pitch) * Math.min(1, dt * 2.5);
@@ -79,7 +73,7 @@ export class OceanSimulator {
         this.boat.roll  = Math.max(-0.10, Math.min(0.10, this.boat.roll));
 
         return {
-            boat: this.getBoatState(),
+            boat:  this.getBoatState(),
             ocean: this.sampleOcean(this.boat.x, this.boat.z),
         };
     }
@@ -102,18 +96,19 @@ export class OceanSimulator {
         const tangentZ = { x: dz.x - center.x, y: dz.y - center.y, z: dz.z - center.z };
         const normal = normalize(cross(tangentZ, tangentX));
 
+        // J = 1 - Σ steepness_i · cos(f_i) — matches ocean.rs exactly
         let jacobian = 1;
         for (const wave of DEFAULT_WAVES) {
             const k = (2 * Math.PI) / wave.wavelength;
-            const c = Math.sqrt(9.81 / k) * wave.speed;
+            const c = Math.sqrt(9.81 / k * Math.tanh(k * OCEAN_DEPTH)) * wave.speed;
             const f = k * (wave.direction.x * x + wave.direction.y * z - c * this.time);
-            jacobian -= k * (wave.steepness / k) * Math.cos(f) * 0.08;
+            jacobian -= wave.steepness * Math.cos(f);
         }
 
         return {
-            height: center.y,
-            normal: [normal.x, Math.max(normal.y, 0.08), normal.z],
-            jacobian,
+            height:   center.y,
+            normal:   [normal.x, Math.max(normal.y, 0.08), normal.z],
+            jacobian: Math.max(-1, Math.min(1.5, jacobian)),
         };
     }
 
@@ -122,7 +117,7 @@ export class OceanSimulator {
         for (const wave of DEFAULT_WAVES) {
             if (wave.wavelength < PHYSICS_LAMBDA_MIN) continue;
             const k = (2 * Math.PI) / wave.wavelength;
-            const c = Math.sqrt(9.81 / k) * wave.speed;
+            const c = Math.sqrt(9.81 / k * Math.tanh(k * OCEAN_DEPTH)) * wave.speed;
             const f = k * (wave.direction.x * x + wave.direction.y * z - c * this.time);
             y += (wave.steepness / k) * Math.sin(f);
         }
@@ -133,7 +128,7 @@ export class OceanSimulator {
         const point = { x, y: 0, z };
         for (const wave of DEFAULT_WAVES) {
             const k = (2 * Math.PI) / wave.wavelength;
-            const c = Math.sqrt(9.81 / k) * wave.speed;
+            const c = Math.sqrt(9.81 / k * Math.tanh(k * OCEAN_DEPTH)) * wave.speed;
             const f = k * (wave.direction.x * x + wave.direction.y * z - c * time);
             const a = wave.steepness / k;
             point.x += wave.direction.x * a * Math.cos(f);
@@ -143,7 +138,6 @@ export class OceanSimulator {
         return point;
     }
 
-    // Intrinsic YXZ Euler → quaternion (xyzw)
     private eulerYXZ(yaw: number, pitch: number, roll: number): [number, number, number, number] {
         const cy = Math.cos(yaw * 0.5),   sy = Math.sin(yaw * 0.5);
         const cp = Math.cos(pitch * 0.5), sp = Math.sin(pitch * 0.5);
