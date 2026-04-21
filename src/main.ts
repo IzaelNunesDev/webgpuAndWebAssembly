@@ -106,11 +106,11 @@ class OceanEngine {
     private createBoat() {
         const group = new THREE.Group();
 
-        const matDark  = new THREE.MeshStandardMaterial({ color: '#5a3520', roughness: 0.75, metalness: 0.05 });
-        const matMid   = new THREE.MeshStandardMaterial({ color: '#8b5c32', roughness: 0.85 });
+        const matDark = new THREE.MeshStandardMaterial({ color: '#5a3520', roughness: 0.75, metalness: 0.05 });
+        const matMid = new THREE.MeshStandardMaterial({ color: '#8b5c32', roughness: 0.85 });
         const matLight = new THREE.MeshStandardMaterial({ color: '#b07840', roughness: 0.9 });
-        const matRope  = new THREE.MeshStandardMaterial({ color: '#c8a86a', roughness: 1.0 });
-        const matSail  = new THREE.MeshStandardMaterial({ color: '#e9e1cf', side: THREE.DoubleSide, roughness: 1 });
+        const matRope = new THREE.MeshStandardMaterial({ color: '#c8a86a', roughness: 1.0 });
+        const matSail = new THREE.MeshStandardMaterial({ color: '#e9e1cf', side: THREE.DoubleSide, roughness: 1 });
 
         // Sloop — 20m length, 5m beam, 3.5m tall (2m draft, 1.5m freeboard at center)
         const hull = new THREE.Mesh(new THREE.BoxGeometry(5, 3.5, 20), matDark);
@@ -133,7 +133,7 @@ class OceanEngine {
         group.add(aftDeck);
 
         // Steps between deck levels
-        const aftStep  = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.28, 0.6), matMid);
+        const aftStep = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.28, 0.6), matMid);
         aftStep.position.set(0, 2.05, 4.6);
         group.add(aftStep);
         const foreStep = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.28, 0.6), matMid);

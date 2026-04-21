@@ -3,6 +3,7 @@ use serde::Serialize;
 
 #[derive(Clone)]
 pub struct WaveParams {
+    pub amp: f64,
     pub direction: DVec2,
     pub steepness: f64,
     pub wavelength: f64,
@@ -23,12 +24,10 @@ pub struct Ocean {
 impl Ocean {
     pub fn new() -> Self {
         let waves = vec![
-            WaveParams { direction: DVec2::new(1.0, 0.0).normalize(), steepness: 0.18, wavelength: 26.0, speed: 0.92 },
-            WaveParams { direction: DVec2::new(0.92, 0.18).normalize(), steepness: 0.15, wavelength: 18.0, speed: 1.03 },
-            WaveParams { direction: DVec2::new(0.76, 0.42).normalize(), steepness: 0.12, wavelength: 14.0, speed: 1.12 },
-            WaveParams { direction: DVec2::new(0.54, 0.62).normalize(), steepness: 0.11, wavelength: 10.5, speed: 1.20 },
-            WaveParams { direction: DVec2::new(0.28, 0.82).normalize(), steepness: 0.10, wavelength: 8.5, speed: 1.28 },
-            WaveParams { direction: DVec2::new(-0.08, 1.0).normalize(), steepness: 0.08, wavelength: 6.5, speed: 1.35 },
+            WaveParams { amp: 1.2, wavelength: 80.0, steepness: 0.25, direction: DVec2::new(1.0, 0.8).normalize(), speed: 0.92 },
+            WaveParams { amp: 0.8, wavelength: 45.0, steepness: 0.22, direction: DVec2::new(-0.7, 0.6).normalize(), speed: 1.03 },
+            WaveParams { amp: 0.5, wavelength: 25.0, steepness: 0.18, direction: DVec2::new(0.3, -0.9).normalize(), speed: 1.12 },
+            WaveParams { amp: 0.3, wavelength: 15.0, steepness: 0.15, direction: DVec2::new(-0.5, -0.4).normalize(), speed: 1.2 },
         ];
 
         Ocean { waves }
@@ -39,13 +38,14 @@ impl Ocean {
 
         for wave in &self.waves {
             let k = 2.0 * std::f64::consts::PI / wave.wavelength;
-            let c = (9.81 / k).sqrt() * wave.speed;
+            let depth = 10.0;
+            let c = (9.81 / k * (k * depth).tanh()).sqrt() * wave.speed;
             let f = k * (wave.direction.x * x + wave.direction.y * z - c * time);
-            let a = wave.steepness / k;
-
-            final_pos.x += wave.direction.x * a * f.cos();
+            
+            let a = wave.amp;
+            final_pos.x += wave.direction.x * a * wave.steepness * f.cos();
             final_pos.y += a * f.sin();
-            final_pos.z += wave.direction.y * a * f.cos();
+            final_pos.z += wave.direction.y * a * wave.steepness * f.cos();
         }
 
         final_pos
@@ -63,10 +63,12 @@ impl Ocean {
 
         for wave in &self.waves {
             let k = 2.0 * std::f64::consts::PI / wave.wavelength;
-            let c = (9.81 / k).sqrt() * wave.speed;
+            let depth = 10.0;
+            let c = (9.81 / k * (k * depth).tanh()).sqrt() * wave.speed;
             let f = k * (wave.direction.x * x + wave.direction.y * z - c * time);
-            let a = wave.steepness / k;
-            jacobian -= k * a * f.cos() * 0.08;
+            
+            // Simplified jacobian using steepness
+            jacobian -= wave.steepness * f.cos();
         }
 
         OceanSample {

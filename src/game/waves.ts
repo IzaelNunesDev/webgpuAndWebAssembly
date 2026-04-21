@@ -5,10 +5,8 @@ import type { WaveDefinition } from './types';
 export const WIND = { x: 0.85, z: 0.30, speed: 7.0 };
 
 export const DEFAULT_WAVES: WaveDefinition[] = [
-    { direction: new THREE.Vector2(1.0, 0.0).normalize(), steepness: 0.18, wavelength: 26.0, speed: 0.92 },
-    { direction: new THREE.Vector2(0.92, 0.18).normalize(), steepness: 0.15, wavelength: 18.0, speed: 1.03 },
-    { direction: new THREE.Vector2(0.76, 0.42).normalize(), steepness: 0.12, wavelength: 14.0, speed: 1.12 },
-    { direction: new THREE.Vector2(0.54, 0.62).normalize(), steepness: 0.11, wavelength: 10.5, speed: 1.2 },
-    { direction: new THREE.Vector2(0.28, 0.82).normalize(), steepness: 0.1, wavelength: 8.5, speed: 1.28 },
-    { direction: new THREE.Vector2(-0.08, 1.0).normalize(), steepness: 0.08, wavelength: 6.5, speed: 1.35 },
+    { amp: 1.2, wavelength: 80, steepness: 0.25, direction: new THREE.Vector2(1.0, 0.8).normalize(), speed: 0.92 },
+    { amp: 0.8, wavelength: 45, steepness: 0.22, direction: new THREE.Vector2(-0.7, 0.6).normalize(), speed: 1.03 },
+    { amp: 0.5, wavelength: 25, steepness: 0.18, direction: new THREE.Vector2(0.3, -0.9).normalize(), speed: 1.12 },
+    { amp: 0.3, wavelength: 15, steepness: 0.15, direction: new THREE.Vector2(-0.5, -0.4).normalize(), speed: 1.2 },
 ];

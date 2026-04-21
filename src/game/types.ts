@@ -3,6 +3,7 @@ import * as THREE from 'three';
 export type ControlMode = 'onFoot' | 'shipHelm' | 'mastControl' | 'swimming' | 'freeCamera';
 
 export type WaveDefinition = {
+    amp: number;
     direction: THREE.Vector2;
     steepness: number;
     wavelength: number;

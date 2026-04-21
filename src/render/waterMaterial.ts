@@ -1,17 +1,17 @@
 import { NodeMaterial } from 'three/webgpu';
-import { 
-    uniform, 
+import {
+    uniform,
     uniformArray,
-    vec3, 
-    vec4, 
-    float, 
-    sin, 
-    cos, 
-    sqrt, 
-    dot, 
-    normalize, 
-    mix, 
-    pow, 
+    vec3,
+    vec4,
+    float,
+    sin,
+    cos,
+    sqrt,
+    dot,
+    normalize,
+    mix,
+    pow,
     max,
     positionWorld,
     normalWorld,
@@ -38,7 +38,7 @@ const gerstnerWave = (pos: any, direction: any, steepness: any, wavelength: any,
 export class OceanMaterial extends NodeMaterial {
     constructor(waveData: WaveDefinition[]) {
         super();
-        
+
         const directions = uniformArray(
             waveData.map((wave) => {
                 if (wave.direction instanceof THREE.Vector2) {
@@ -54,10 +54,10 @@ export class OceanMaterial extends NodeMaterial {
         const wavelengths = uniformArray(waveData.map((wave) => wave.wavelength), 'float');
         const speeds = uniformArray(waveData.map((wave) => wave.speed), 'float');
         const t = time;
-        
+
         const p = positionWorld.xz;
         let finalPos = positionWorld;
-        
+
         // Sum waves using uniform arrays so the node graph stays compatible with Three r184.
         for (let i = 0; i < waveData.length; i++) {
             finalPos = finalPos.add(
@@ -73,16 +73,16 @@ export class OceanMaterial extends NodeMaterial {
         }
 
         this.positionNode = finalPos;
-        
-        const deepColor = uniform(vec3(0.04,0.24,0.36));
-        const shallowColor = uniform(vec3(0.16,0.63,0.72));
-        
+
+        const deepColor = uniform(vec3(0.04, 0.24, 0.36));
+        const shallowColor = uniform(vec3(0.16, 0.63, 0.72));
+
         const vDir = normalize(cameraPosition.sub(positionWorld));
         const nDir = normalWorld;
-        
+
         const f0 = float(0.02);
         const fresnel = f0.add(float(1.0).sub(f0).mul(pow(float(1.0).sub(max(dot(nDir, vDir), 0.0)), 5.0)));
-        
+
         this.colorNode = vec4(mix(deepColor, shallowColor, fresnel), 1.0);
     }
 }

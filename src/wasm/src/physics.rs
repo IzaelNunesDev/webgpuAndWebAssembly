@@ -122,8 +122,12 @@ impl PhysicsEngine {
             for pz in probes_z {
                 let local_point = point![px, -1.5, pz];
                 let world_point = boat.position().transform_point(&local_point);
-                let wave = ocean.sample(world_point.x, world_point.z, time);
-                let submersao = wave.height - world_point.y;
+                
+                let velocity = boat.velocity_at_point(&world_point);
+                let predicted = world_point + velocity * dt_fixed;
+                
+                let wave = ocean.sample(predicted.x, predicted.z, time);
+                let submersao = wave.height - predicted.y;
 
                 if submersao > 0.0 {
                     // Capping max force per probe so deep submergences don't blow up the physics
@@ -132,7 +136,6 @@ impl PhysicsEngine {
                     boat.apply_impulse_at_point(up_force * dt_fixed, world_point, true);
 
                     // Add drag to stabilize bouncing
-                    let velocity = boat.velocity_at_point(&world_point);
                     let local_drag = -velocity * submersao * 40.0;
                     boat.apply_impulse_at_point(local_drag * dt_fixed, world_point, true);
                 }
