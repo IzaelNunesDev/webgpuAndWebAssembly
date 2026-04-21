@@ -39,26 +39,31 @@ pub struct PhysicsEngine {
 }
 
 impl PhysicsEngine {
-    pub fn new() -> Self {
+    pub fn new(ocean: &Ocean) -> Self {
         let mut rigid_body_set = RigidBodySet::new();
         let mut collider_set = ColliderSet::new();
         let gravity = vector![0.0, -9.81, 0.0];
 
-        // Start near hydrostatic equilibrium so the boat doesn't free-fall into water.
-        // With probes at local y=-1.5 and buoyancy_k=8500:
-        //   equilibrium: 16 probes × 1.6m depth × 8500 ≈ 217,600 N ≈ 22,000kg × 9.81
-        // → boat center at y = -0.1 (probes at world y = -1.6, 1.6m below waterline)
+        // Sample initial wave height and spawn boat at waterline
+        let wave = ocean.sample(0.0, 0.0, 0.0);
+        let calado = 1.6;
+        let initial_y = wave.height + calado * 0.7;
+
+        let mass_props = MassProperties::new(point![0.0, -1.2, 0.0], 22000.0, vector![750000.0, 780000.0, 70000.0]);
+
         let rigid_body = RigidBodyBuilder::dynamic()
-            .translation(vector![0.0, -0.1, 0.0])
+            .translation(vector![0.0, initial_y, 0.0])
             .linear_damping(0.25)
-            .angular_damping(3.5)   // strong resistance to pitch/roll/yaw
-            .additional_mass(22000.0)
+            .angular_damping(0.85) // User requested 0.85
+            .additional_mass_properties(mass_props)
             .build();
+
         let boat_handle = rigid_body_set.insert(rigid_body);
 
-        // Hull collider matches new 20m × 5m × 3.5m visual hull
+        // Hull collider matches new 20m × 5m × 3.5m visual hull.
+        // Densidade alterada para 0 para não disputar com a massa especificada (22.000kg).
         let hull = ColliderBuilder::cuboid(2.5, 1.75, 10.0)
-            .density(80.0)
+            .density(0.0)
             .friction(0.8)
             .restitution(0.0)
             .build();
@@ -102,30 +107,34 @@ impl PhysicsEngine {
     }
 
     pub fn step(&mut self, dt: f64, ocean: &Ocean, time: f64) {
-        self.integration_parameters.dt = dt.max(1.0 / 240.0);
+        let dt_fixed = 1.0 / 120.0;
+        self.integration_parameters.dt = dt_fixed;
 
         let boat = &mut self.rigid_body_set[self.boat_handle];
 
-        // 4×4 buoyancy probes distributed across hull bottom (local y = -1.5)
-        let probes_x: [f64; 4] = [-1.8, -0.6, 0.6, 1.8];
-        let probes_z: [f64; 4] = [-8.5, -2.8, 2.8, 8.5];
+        // 8x4 Grid of buoyancy probes (32 probes total)
+        let probes_x: [f64; 4] = [-2.0, -0.7, 0.7, 2.0];
+        let probes_z: [f64; 8] = [-9.5, -6.8, -4.1, -1.4, 1.4, 4.1, 6.8, 9.5];
+        let total_area = 5.0 * 20.0;
+        let area_probe = total_area / 32.0;
 
         for px in probes_x {
             for pz in probes_z {
                 let local_point = point![px, -1.5, pz];
                 let world_point = boat.position().transform_point(&local_point);
                 let wave = ocean.sample(world_point.x, world_point.z, time);
-                let depth = wave.height - world_point.y;
+                let submersao = wave.height - world_point.y;
 
-                if depth > 0.0 {
-                    // Pure upward buoyancy only — horizontal wave-normal forces cause tipping
-                    let buoyancy = (depth * 8500.0).min(20000.0);
-                    let up_force = vector![0.0, buoyancy, 0.0];
-                    boat.apply_impulse_at_point(up_force * dt, world_point, true);
+                if submersao > 0.0 {
+                    // Capping max force per probe so deep submergences don't blow up the physics
+                    let forca = (submersao * area_probe * 1000.0 * 9.81).min(20000.0);
+                    let up_force = vector![0.0, forca, 0.0];
+                    boat.apply_impulse_at_point(up_force * dt_fixed, world_point, true);
 
-                    // Velocity damping at each probe (wave resistance)
+                    // Add drag to stabilize bouncing
                     let velocity = boat.velocity_at_point(&world_point);
-                    boat.apply_impulse_at_point(-velocity * depth * 1.4 * dt, world_point, true);
+                    let local_drag = -velocity * submersao * 40.0;
+                    boat.apply_impulse_at_point(local_drag * dt_fixed, world_point, true);
                 }
             }
         }

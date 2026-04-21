@@ -16,9 +16,11 @@ pub struct GameState {
 impl GameState {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
+        let ocean = Ocean::new();
+        let physics = PhysicsEngine::new(&ocean);
         GameState {
-            ocean: Ocean::new(),
-            physics: PhysicsEngine::new(),
+            ocean,
+            physics,
             time: 0.0,
         }
     }
