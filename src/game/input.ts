@@ -33,10 +33,6 @@ export class InputController {
     }
 
     syncMode(mode: ControlMode) {
-        if ((mode === 'onFoot' || mode === 'shipHelm' || mode === 'swimming') && !this.pointerLocked) {
-            this.requestPointerLock();
-        }
-
         if (mode === 'freeCamera' && this.pointerLocked) {
             this.releasePointerLock();
         }

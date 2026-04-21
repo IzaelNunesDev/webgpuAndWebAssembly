@@ -13,7 +13,7 @@ self.onmessage = async (event) => {
 
         try {
             const pkg = await import('../../wasm-pkg/ocean_wasm');
-            await pkg.default(wasmUrl);
+            await pkg.default({ module_or_path: wasmUrl });
             state = new pkg.GameState();
             wasmEnabled = true;
         } catch (error) {

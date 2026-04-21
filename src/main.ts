@@ -5,12 +5,14 @@ import { Hud } from './game/hud';
 import type { BoatState, ControlMode, PhysicsMessage, ShipControlState } from './game/types';
 import { DEFAULT_WAVES, WIND } from './game/waves';
 import { OceanMaterial } from './render/waterMaterial';
+import { AvatarController } from './game/avatar';
+import { hullMaterial, hullWaterLevel } from './render/hullMaterial';
 import './style.css';
 
 type RendererLike = {
     domElement: HTMLCanvasElement;
     setSize(width: number, height: number): void;
-    renderAsync?(scene: THREE.Scene, camera: THREE.Camera): Promise<void>;
+    init?(): Promise<void>;
     render(scene: THREE.Scene, camera: THREE.Camera): void;
 };
 
@@ -29,7 +31,7 @@ class OceanEngine {
     private readonly input: InputController;
     private readonly hud = new Hud();
     private readonly worker = new Worker(new URL('./wasm/physicsWorker.ts', import.meta.url), { type: 'module' });
-    private readonly clock = new THREE.Clock();
+    private readonly timer = new THREE.Timer();
     private readonly playerVelocity = new THREE.Vector3();
     private readonly playerWorld = new THREE.Vector3(0, 4.3, 7.0);
     private readonly playerLocal = new THREE.Vector3(0, PLAYER_EYE_HEIGHT + 2.44, 7.0);
@@ -42,6 +44,9 @@ class OceanEngine {
     private readonly shipControls: ShipControlState = { throttle: 0, rudder: 0, sail: 0, anchor: false };
     private readonly boatMesh: THREE.Group;
     private readonly oceanMesh: THREE.Mesh;
+    private readonly avatar: AvatarController;
+    private sailMesh!: THREE.Mesh;
+    private sailGeo!: THREE.PlaneGeometry;
     private boomMesh: THREE.Mesh | null = null;
     private mode: ControlMode = 'onFoot';
     private yaw = 0;
@@ -71,10 +76,18 @@ class OceanEngine {
         this.boatMesh = this.createBoat();
         this.boomMesh = this.boatMesh.getObjectByName('boom') as THREE.Mesh | null;
         this.oceanMesh = this.createOcean();
+        this.avatar = new AvatarController(this.scene, this.camera);
 
         this.setupScene();
         this.bindEvents();
         this.initWorker();
+        this.start();
+    }
+
+    private async start() {
+        if (this.renderer.init) {
+            await this.renderer.init();
+        }
         this.animate();
     }
 
@@ -113,7 +126,7 @@ class OceanEngine {
         const matSail = new THREE.MeshStandardMaterial({ color: '#e9e1cf', side: THREE.DoubleSide, roughness: 1 });
 
         // Sloop — 20m length, 5m beam, 3.5m tall (2m draft, 1.5m freeboard at center)
-        const hull = new THREE.Mesh(new THREE.BoxGeometry(5, 3.5, 20), matDark);
+        const hull = new THREE.Mesh(new THREE.BoxGeometry(5, 3.5, 20), hullMaterial);
         hull.position.y = 0;
         group.add(hull);
 
@@ -195,6 +208,14 @@ class OceanEngine {
         jib.rotation.y = Math.PI;
         group.add(jib);
 
+        // Procedural Sail
+        this.sailGeo = new THREE.PlaneGeometry(5, 7, 12, 12);
+        const sailMat = new THREE.MeshStandardMaterial({ color: 0xedeae0, side: THREE.DoubleSide, roughness: 0.85 });
+        this.sailMesh = new THREE.Mesh(this.sailGeo, sailMat);
+        this.sailMesh.position.set(0, 6, -1.5);
+        this.sailMesh.rotation.y = Math.PI;
+        group.add(this.sailMesh);
+
         // Railings — port and starboard along main deck
         for (const side of [-1, 1] as const) {
             for (let z = -4.0; z <= 4.5; z += 2.2) {
@@ -272,14 +293,11 @@ class OceanEngine {
     private animate = () => {
         requestAnimationFrame(this.animate);
 
-        const dt = Math.min(this.clock.getDelta(), 0.033);
+        this.timer.update();
+        const dt = Math.min(this.timer.getDelta(), 0.033);
         this.update(dt);
 
-        if (this.renderer.renderAsync) {
-            void this.renderer.renderAsync(this.scene, this.camera);
-        } else {
-            this.renderer.render(this.scene, this.camera);
-        }
+        this.renderer.render(this.scene, this.camera);
 
         this.input.endFrame();
     };
@@ -290,7 +308,41 @@ class OceanEngine {
         this.updatePlayer(dt);
         this.updateShipControls(dt);
         this.updateBoom();
+
+        // Avatar updates
+        const inWater = this.camera.position.y < this.oceanSample.height + 0.3;
+        if (inWater && this.avatar.state === 'deck') this.avatar.setState('swimming');
+        if (!inWater && this.avatar.state === 'swimming') this.avatar.setState('deck');
+        this.avatar.update(dt);
+
+        // Hull submersion
+        hullWaterLevel.value = this.oceanSample.height;
+
+        // Sail updates
+        this.updateSail(this.shipControls, this.boatMesh);
+
         this.pushControlsToWorker();
+    }
+
+    private updateSail(controls: ShipControlState, boat: THREE.Object3D) {
+        const f = THREE.MathUtils.clamp(controls.sail, 0, 1);
+        this.sailMesh.scale.y = 0.15 + f * 0.85;
+
+        const windAngle = Math.atan2(WIND.z, WIND.x);
+        const rel = THREE.MathUtils.euclideanModulo(windAngle - boat.rotation.y + Math.PI, Math.PI * 2) - Math.PI;
+        this.sailMesh.rotation.z = rel * 0.35 * f;
+
+        const pos = this.sailGeo.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+            const x = pos.getX(i);
+            pos.setZ(i, Math.sin(x * 1.8) * 0.12 * f);
+        }
+        pos.needsUpdate = true;
+
+        const sailStatus = document.getElementById('sail-status');
+        if (sailStatus) {
+            sailStatus.textContent = Math.round(f * 100) + '%';
+        }
     }
 
     private updateModeTransitions() {

@@ -16,7 +16,8 @@ import {
     positionWorld,
     normalWorld,
     cameraPosition,
-    time
+    time,
+    wgslFn
 } from 'three/tsl';
 import * as THREE from 'three';
 import type { WaveDefinition } from '../game/types';
@@ -74,15 +75,26 @@ export class OceanMaterial extends NodeMaterial {
 
         this.positionNode = finalPos;
 
-        const deepColor = uniform(vec3(0.04, 0.24, 0.36));
-        const shallowColor = uniform(vec3(0.16, 0.63, 0.72));
+        const deepColor = uniform(vec3(0.039, 0.180, 0.290)); // #0a2e4a
+        const shallowColor = uniform(vec3(0.118, 0.565, 0.690)); // #1e90b0
 
-        const vDir = normalize(cameraPosition.sub(positionWorld));
-        const nDir = normalWorld;
+        const oceanColorFn = wgslFn(`
+            fn getOceanColor(worldPos: vec3f, camPos: vec3f, n: vec3f, deep: vec3f, shallow: vec3f) -> vec3f {
+                let viewDir = normalize(camPos - worldPos);
+                let dist = distance(camPos, worldPos);
+                let depth = clamp(dist * 0.015, 0.0, 1.0);
+                let base = mix(shallow, deep, depth);
+                let fresnel = pow(1.0 - max(dot(viewDir, n), 0.0), 5.0);
+                return mix(base, vec3f(0.7, 0.85, 1.0), fresnel * 0.4);
+            }
+        `);
 
-        const f0 = float(0.02);
-        const fresnel = f0.add(float(1.0).sub(f0).mul(pow(float(1.0).sub(max(dot(nDir, vDir), 0.0)), 5.0)));
-
-        this.colorNode = vec4(mix(deepColor, shallowColor, fresnel), 1.0);
+        this.colorNode = oceanColorFn({
+            worldPos: positionWorld,
+            camPos: cameraPosition,
+            n: normalWorld,
+            deep: deepColor,
+            shallow: shallowColor
+        });
     }
 }
