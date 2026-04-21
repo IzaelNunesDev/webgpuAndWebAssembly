@@ -82,3 +82,9 @@ canvas {
     color: var(--warning);
     font-weight: 700;
 }
+
+#compass {
+    box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    border: 1.5px solid rgba(173, 216, 230, 0.25);
+    image-rendering: crisp-edges;
+}

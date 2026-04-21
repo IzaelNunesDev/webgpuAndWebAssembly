@@ -7,58 +7,97 @@ export function createRig(boat: THREE.Group) {
   mast.position.set(0, 0, -1.5);
   boat.add(mast);
 
-  const mastPole = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.08, 0.1, 9),
-    new THREE.MeshStandardMaterial({ color: 0x3a2a1a })
-  );
-  mastPole.position.y = 4.5;
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.8 });
+  const ropeMat = new THREE.MeshStandardMaterial({ color: 0x8a7050, roughness: 1.0 });
+  const sailMatMain = new THREE.MeshStandardMaterial({
+    color: 0xe8e4d8, side: THREE.DoubleSide, roughness: 0.95,
+    transparent: true, opacity: 0.97,
+  });
+  const sailMatJib = new THREE.MeshStandardMaterial({
+    color: 0xd8d2c0, side: THREE.DoubleSide, roughness: 0.95,
+    transparent: true, opacity: 0.97,
+  });
+
+  // Mastro principal
+  const mastPole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.11, 11), woodMat);
+  mastPole.position.y = 5.5;
   mast.add(mastPole);
 
-  // VELA MAIOR (principal)
+  // Shrouds (cabos laterais de suporte)
+  for (const side of [-1, 1] as const) {
+    const shroud = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 9.8), ropeMat);
+    shroud.position.set(side * 2.1, 0.8, 1.0);
+    shroud.rotation.z = side * 0.22;
+    shroud.rotation.x = -0.06;
+    mast.add(shroud);
+  }
+
+  // Forestay (cabo dianteiro)
+  const forestay = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 10.5), ropeMat);
+  forestay.position.set(0, 0.8, 5.5);
+  forestay.rotation.x = 0.52;
+  mast.add(forestay);
+
+  // ── VELA MAIOR ──
   const mainYard = new THREE.Group();
-  mainYard.position.y = 7;
+  mainYard.position.y = 2.0;
   mast.add(mainYard);
 
-  const mainSail = new THREE.Mesh(
-    new THREE.PlaneGeometry(4.5, 6, 1, 8),
-    new THREE.MeshStandardMaterial({ color: 0xe8e4d8, side: THREE.DoubleSide, roughness: 0.9 })
-  );
-  mainSail.position.y = -3;
+  // Verga superior (gaff)
+  const gaff = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 4.8), woodMat);
+  gaff.rotation.z = Math.PI / 2;
+  mainYard.add(gaff);
+
+  const mainSail = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 6.5, 2, 10), sailMatMain);
+  mainSail.name = 'mainSail';
+  mainSail.position.y = -3.25;
   mainYard.add(mainSail);
 
-  // VELA DE PROA (buja)
+  // Boom (verga inferior — fixo no mastro, não no yard)
+  const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 4.8), woodMat);
+  boom.rotation.z = Math.PI / 2;
+  boom.position.y = 1.2;
+  mast.add(boom);
+
+  // ── VELA DE PROA (JIB) ──
   const jibYard = new THREE.Group();
-  jibYard.position.set(0, 5, 3);
+  jibYard.position.set(0, 4.5, 5.5);
   mast.add(jibYard);
 
-  const jibSail = new THREE.Mesh(
-    new THREE.PlaneGeometry(2.5, 4, 1, 6),
-    new THREE.MeshStandardMaterial({ color: 0xd8d2c0, side: THREE.DoubleSide })
-  );
-  jibSail.position.y = -2;
+  const jibSail = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 4.5, 1, 8), sailMatJib);
+  jibSail.name = 'jibSail';
+  jibSail.position.y = -2.25;
   jibYard.add(jibSail);
 
-  return { mast, mainYard, mainSail, jibYard, jibSail };
+  // Cabo do jib
+  const jibstay = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 5.0), ropeMat);
+  jibstay.position.set(0, -1.5, 0);
+  jibstay.rotation.x = 0.35;
+  jibYard.add(jibstay);
+
+  return { mast, mainYard, mainSail, jibYard, jibSail, boom };
 }
 
 export function updateRig(rig: any, sailFactor: number, boat: THREE.Group) {
   const f = THREE.MathUtils.clamp(sailFactor, 0, 1);
-  
-  // 1. SOBE/DESCE o mastro (não só escala)
-  rig.mainYard.position.y = 2 + f * 5; // 0% = recolhida embaixo, 100% = no topo
-  rig.jibYard.position.y = 1.5 + f * 3.5;
-  
-  // 2. Abre a vela
-  rig.mainSail.scale.y = f;
-  rig.jibSail.scale.y = f;
-  rig.mainSail.position.y = -3 * f;
-  rig.jibSail.position.y = -2 * f;
-  rig.mainSail.visible = f > 0.01;
-  rig.jibSail.visible = f > 0.01;
 
-  // 3. Infla com vento
+  // Yard sobe conforme a vela é içada (sem scale para não achatar)
+  rig.mainYard.position.y = 1.5 + f * 5.5;
+  rig.jibYard.position.y = 1.2 + f * 3.8;
+
+  // Vela pendurada em posição fixa abaixo do yard
+  rig.mainSail.position.y = -3.25;
+  rig.jibSail.position.y = -2.25;
+
+  rig.mainSail.visible = f > 0.02;
+  rig.jibSail.visible = f > 0.02;
+
+  // Inflação pelo vento
   const windAngle = Math.atan2(WIND.z, WIND.x) - boat.rotation.y;
-  const infla = Math.sin(windAngle) * 0.3 * f;
-  rig.mainSail.rotation.y = infla;
-  rig.jibSail.rotation.y = infla * 1.2;
+  const belly = Math.sin(windAngle) * 0.28 * f;
+  rig.mainSail.rotation.y = belly;
+  rig.jibSail.rotation.y = belly * 1.15;
+
+  // Boom levemente inclinado pelo vento
+  if (rig.boom) rig.boom.rotation.y = belly * 0.4;
 }

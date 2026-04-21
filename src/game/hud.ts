@@ -27,11 +27,11 @@ export class Hud {
         };
 
         const hints: Record<ControlMode, string> = {
-            onFoot:      'WASD move · Espaço pula · E leme/mastro · Q câmera livre.',
-            shipHelm:    'A/D leme · F âncora · E sai do leme.',
-            mastControl: 'W/S sobe/desce a vela · A/D gira a vela (direciona) · E sai do mastro.',
-            swimming:    'WASD nada · Shift acelera · Espaço mergulho · E tenta agarrar a escada.',
-            freeCamera:  'Q volta ao corpo · WASD navega sem pointer lock.',
+            onFoot:      'WASD move · Espaço pula · E leme/mastro · Z câmera livre · [ ] vela.',
+            shipHelm:    'A/D leme (volante gira) · F âncora · E sai do leme · [ ] vela.',
+            mastControl: 'W/S sobe/desce vela · Q -10% · A/D leme · E sai do mastro.',
+            swimming:    'WASD nada · Shift acelera · Espaço sobe · C desce · E sobe na escada.',
+            freeCamera:  'Z volta ao corpo · WASD/Shift navega · Bússola: rumo do barco.',
         };
 
         this.modeEl.textContent = labels[mode];
