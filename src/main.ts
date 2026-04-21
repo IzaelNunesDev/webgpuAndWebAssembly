@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { WebGPURenderer } from 'three/webgpu';
+import { WebGPURenderer, MeshStandardNodeMaterial } from 'three/webgpu';
 import { InputController } from './game/input';
 import { Hud } from './game/hud';
 import type { BoatState, ControlMode, PhysicsMessage, ShipControlState } from './game/types';
@@ -8,6 +8,7 @@ import { OceanMaterial } from './render/waterMaterial';
 import { hullMaterial, hullWaterLevel } from './render/hullMaterial';
 import { createRig, updateRig } from './game/sails';
 import { AvatarController } from './game/avatar';
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 import './style.css';
 
 type RendererLike = {
@@ -124,90 +125,45 @@ class OceanEngine {
     private createRenderer(): RendererLike {
         if ('gpu' in navigator) {
             this.hud.setRenderLabel('Three.js WebGPURenderer');
-            return new WebGPURenderer({ antialias: true }) as unknown as RendererLike;
+            const renderer = new WebGPURenderer({ antialias: true });
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.0;
+            return renderer as unknown as RendererLike;
         }
         this.hud.setRenderLabel('Three.js WebGLRenderer');
-        return new THREE.WebGLRenderer({ antialias: true });
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
+        return renderer;
     }
 
     private setupScene() {
-        const ambient = new THREE.AmbientLight(0x8aaacc, 0.55);
+        const ambient = new THREE.AmbientLight(0x8aaacc, 0.45);
 
         // Direção do sol — normalizada para usar no shader do céu também
         const SUN_DIR = new THREE.Vector3(80, 60, -40).normalize();
 
-        const sun = new THREE.DirectionalLight(0xfff6e0, 2.8);
+        const sun = new THREE.DirectionalLight(0xfff6e0, 3.2);
         sun.position.copy(SUN_DIR);
         sun.castShadow = true;
         sun.shadow.mapSize.set(2048, 2048);
         sun.shadow.camera.near = 0.5;
-        sun.shadow.camera.far = 300;
-        sun.shadow.camera.left = -60;
-        sun.shadow.camera.right = 60;
-        sun.shadow.camera.top = 60;
-        sun.shadow.camera.bottom = -60;
-        sun.shadow.bias = -0.001;
+        sun.shadow.camera.far = 400;
+        sun.shadow.camera.left = -80;
+        sun.shadow.camera.right = 80;
+        sun.shadow.camera.top = 80;
+        sun.shadow.camera.bottom = -80;
+        sun.shadow.bias = -0.0005;
 
-        const fill = new THREE.DirectionalLight(0x4488bb, 0.45);
+        const fill = new THREE.DirectionalLight(0x4488bb, 0.65);
         fill.position.set(-40, 10, 60);
 
         this.scene.add(ambient, sun, fill);
 
-        // ── Cúpula do céu com disco solar embutido ──
-        const skyGeo = new THREE.SphereGeometry(900, 32, 16);
-        const skyMat = new THREE.ShaderMaterial({
-            side: THREE.BackSide,
-            depthWrite: false,        // céu nunca oculta nada
-            uniforms: {
-                topColor:     { value: new THREE.Color(0x08203a) },
-                horizonColor: { value: new THREE.Color(0x87b6e8) },
-                sunDir:       { value: SUN_DIR },
-                offset:  { value: 0.25 },
-                exponent:{ value: 0.55 },
-            },
-            vertexShader: `
-                varying vec3 vDir;
-                void main() {
-                    vDir = normalize((modelMatrix * vec4(position, 0.0)).xyz);
-                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-                }
-            `,
-            fragmentShader: `
-                uniform vec3  topColor;
-                uniform vec3  horizonColor;
-                uniform vec3  sunDir;
-                uniform float offset;
-                uniform float exponent;
-                varying vec3  vDir;
-
-                void main() {
-                    vec3  d  = normalize(vDir);
-                    float h  = d.y + offset;
-                    vec3  sky = mix(horizonColor, topColor,
-                                   max(pow(max(h, 0.0), exponent), 0.0));
-
-                    // Brilho de horizonte perto do sol
-                    float sd   = max(dot(d, sunDir), 0.0);
-                    float haze = pow(sd, 6.0) * 0.25 * (1.0 - max(d.y, 0.0));
-                    sky += vec3(1.0, 0.75, 0.45) * haze;
-
-                    // Halo laranja em torno do sol
-                    float halo = smoothstep(0.94,  0.987, sd);
-                    sky = mix(sky, vec3(1.0, 0.65, 0.25), halo * 0.45);
-
-                    // Disco solar branco-amarelado
-                    float disk = smoothstep(0.9990, 0.9998, sd);
-                    sky = mix(sky, vec3(1.3, 1.25, 1.0), disk);
-
-                    gl_FragColor = vec4(sky, 1.0);
-                }
-            `,
-        });
-        const sky = new THREE.Mesh(skyGeo, skyMat);
-        sky.renderOrder = -1;
+        const sky = this.setupEnvironment();
 
         // Nuvens volumétricas simples
-        const cloudMat = new THREE.MeshStandardMaterial({
+        const cloudMat = new MeshStandardNodeMaterial({
             color: 0xf0f8ff, transparent: true, opacity: 0.88, roughness: 1,
         });
         for (let i = 0; i < 14; i++) {
@@ -230,7 +186,7 @@ class OceanEngine {
             this.scene.add(cloud);
         }
 
-        this.scene.add(sky, this.boatMesh, this.oceanMesh);
+        this.scene.add(this.boatMesh, this.oceanMesh);
         this.camera.position.copy(this.playerWorld);
     }
 
@@ -275,7 +231,7 @@ class OceanEngine {
         group.add(hatchRim);
         const hatch = new THREE.Mesh(
             new THREE.BoxGeometry(1.4, 0.2, 1.9),
-            new THREE.MeshStandardMaterial({ color: '#1e100a', roughness: 0.9 })
+            new MeshStandardNodeMaterial({ color: '#1e100a', roughness: 0.9 })
         );
         hatch.position.set(-0.5, 1.96, 1.8);
         group.add(hatch);
@@ -396,9 +352,8 @@ class OceanEngine {
             this.prevBoatPos.copy(newPos);
             this.prevBoatQ.copy(newQ);
         }
-
-        this.boatMesh.position.copy(this.boatPosition);
-        this.boatMesh.quaternion.copy(this.boatQuaternion);
+        // As transformações do boatMesh agora são aplicadas com interpolação no loop animate/update 
+        // para evitar o jitter visual entre os steps da física e a taxa de atualização do monitor.
     }
 
     private animate = () => {
@@ -421,6 +376,13 @@ class OceanEngine {
         this.avatar.update(dt);
 
         hullWaterLevel.value = this.oceanSample.height;
+
+        // 3. Interpolação Visual (Smoothing) 
+        // Suaviza o barco em direção aos dados brutos da física (LERP/SLERP)
+        // Isso resolve o tremor visual (jitter) e dá sensação de peso.
+        this.boatMesh.position.lerp(this.boatPosition, 0.15);
+        this.boatMesh.quaternion.slerp(this.boatQuaternion, 0.15);
+
         updateRig(this.rig, this.shipControls.sail, this.boatMesh);
         this.drawCompass();
         this.pushControlsToWorker();
@@ -648,14 +610,15 @@ class OceanEngine {
         this.camera.updateProjectionMatrix();
 
         if (this.mode === 'shipHelm') {
-            const offset = new THREE.Vector3(0, PLAYER_EYE_HEIGHT + 2.44, 9.0).applyQuaternion(this.boatQuaternion);
-            this.camera.position.copy(this.boatPosition).add(offset);
+            // Usa boatMesh (suavizado) em vez de boatPosition (bruto) para evitar jitter na câmera
+            const offset = new THREE.Vector3(0, PLAYER_EYE_HEIGHT + 2.44, 9.0).applyQuaternion(this.boatMesh.quaternion);
+            this.camera.position.copy(this.boatMesh.position).add(offset);
             return;
         }
 
         if (this.mode === 'mastControl') {
-            const offset = new THREE.Vector3(0, PLAYER_EYE_HEIGHT + 2.04, -1.5).applyQuaternion(this.boatQuaternion);
-            this.camera.position.copy(this.boatPosition).add(offset);
+            const offset = new THREE.Vector3(0, PLAYER_EYE_HEIGHT + 2.04, -1.5).applyQuaternion(this.boatMesh.quaternion);
+            this.camera.position.copy(this.boatMesh.position).add(offset);
             return;
         }
 
@@ -712,7 +675,17 @@ class OceanEngine {
             );
         }
 
-        this.camera.position.copy(this.playerWorld);
+        if (this.mode === 'onFoot') {
+            // Em vez de usar playerWorld diretamente (que sofre o "jump" da física), 
+            // recalculamos a posição da câmera relativa ao mesh suavizado do barco.
+            // Isso mantém o jogador visualmente fixo ao convés enquanto o barco balança suavemente.
+            const visualWorldPos = this.playerLocal.clone()
+                .applyQuaternion(this.boatMesh.quaternion)
+                .add(this.boatMesh.position);
+            this.camera.position.copy(visualWorldPos);
+        } else {
+            this.camera.position.copy(this.playerWorld);
+        }
 
         // Head-bob ao caminhar
         if (this.mode === 'onFoot') {
@@ -817,6 +790,21 @@ class OceanEngine {
         this.camera.aspect = window.innerWidth / window.innerHeight;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    private setupEnvironment() {
+        // Carrega um mapa de ambiente HDR para iluminação global e reflexos realistas
+        const hdrUrl = 'https://threejs.org/examples/textures/equirectangular/blouberg_sunrise_2_1k.hdr';
+        
+        new RGBELoader().load(hdrUrl, (texture) => {
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            this.scene.environment = texture;
+            this.scene.background = texture;
+            this.scene.backgroundBlurriness = 0.02; // Leve desfoque no fundo para profundidade
+        });
+
+        // O renderizador automaticamente usará a exposição e tomemapping definidos no construtor
+        return null; 
     }
 }
 

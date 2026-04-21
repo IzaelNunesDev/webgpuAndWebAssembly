@@ -1,21 +1,42 @@
 import * as THREE from 'three';
 import { WIND } from './waves';
 
+import { MeshStandardNodeMaterial } from 'three/webgpu';
+import { time, positionLocal, sin, uv, vec3, float } from 'three/tsl';
+
 export function createRig(boat: THREE.Group) {
   const mast = new THREE.Group();
   mast.name = 'mast';
   mast.position.set(0, 0, -1.5);
   boat.add(mast);
 
-  const woodMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.8 });
-  const ropeMat = new THREE.MeshStandardMaterial({ color: 0x8a7050, roughness: 1.0 });
-  const sailMatMain = new THREE.MeshStandardMaterial({
+  const woodMat = new MeshStandardNodeMaterial({ color: 0x3a2a1a, roughness: 0.8 });
+  const ropeMat = new MeshStandardNodeMaterial({ color: 0x8a7050, roughness: 1.0 });
+
+  // ── Lógica de Animação das Velas (TSL) ───────────────────────────────────
+  
+  // A vela balança baseada no tempo e na posição X local
+  const windSpeed = time.mul(2.0);
+  const windRipple = sin(positionLocal.x.add(windSpeed)).mul(0.12);
+
+  // Máscara UV: Apenas a parte inferior e as pontas balançam (UV.y baixo)
+  // No Three.js PlaneGeometry, UV.y=1 está no topo, UV.y=0 na base.
+  // Queremos que o topo (preso à verga) NÃO mova.
+  const windMask = float(1.0).sub(uv().y); 
+  const displacement = windRipple.mul(windMask);
+
+  // Aplica o deslocamento no eixo Z local (perpendicular à vela)
+  const sailPositionNode = positionLocal.add(vec3(0, 0, displacement));
+
+  const sailMatMain = new MeshStandardNodeMaterial({
     color: 0xe8e4d8, side: THREE.DoubleSide, roughness: 0.95,
     transparent: true, opacity: 0.97,
+    positionNode: sailPositionNode
   });
-  const sailMatJib = new THREE.MeshStandardMaterial({
+  const sailMatJib = new MeshStandardNodeMaterial({
     color: 0xd8d2c0, side: THREE.DoubleSide, roughness: 0.95,
     transparent: true, opacity: 0.97,
+    positionNode: sailPositionNode
   });
 
   // Mastro principal

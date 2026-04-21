@@ -1,18 +1,21 @@
-import { NodeMaterial } from 'three/webgpu';
+import { MeshStandardNodeMaterial } from 'three/webgpu';
 import {
     uniform,
     uniformArray,
     vec3,
+    color,
     float,
     sin,
     cos,
     dot,
     clamp,
+    mix,
+    smoothstep,
     positionWorld,
+    positionLocal,
     normalWorld,
     cameraPosition,
     time,
-    wgslFn,
 } from 'three/tsl';
 import * as THREE from 'three';
 import type { WaveDefinition } from '../game/types';
@@ -31,9 +34,14 @@ const gerstnerWave = (pos: any, direction: any, steepness: any, k: any, tanhC: a
     );
 };
 
-export class OceanMaterial extends NodeMaterial {
+export class OceanMaterial extends MeshStandardNodeMaterial {
     constructor(waveData: WaveDefinition[]) {
-        super();
+        super({
+            roughness: 0.08,
+            metalness: 0.1,
+            transparent: true,
+            opacity: 1.0
+        });
 
         // ── Per-wave uniforms ────────────────────────────────────────────────────
         const directions = uniformArray(
@@ -79,9 +87,6 @@ export class OceanMaterial extends NodeMaterial {
         this.positionNode = finalPos;
 
         // ── Jacobian — compression metric for breaking-wave foam ─────────────────
-        // J = 1 - Σ steepness_i · cos(f_i)
-        // J → 0  : crest is very peaky (steep wave)
-        // J < 0  : wave is breaking
         let jacobian: any = float(1.0);
         for (let i = 0; i < waveData.length; i++) {
             const ki  = ks.element(i)         as any;
@@ -91,85 +96,38 @@ export class OceanMaterial extends NodeMaterial {
             const fi  = ki.mul(dot(di, p).sub(ci.mul(time)));
             jacobian  = jacobian.sub(si.mul(cos(fi)));
         }
-        // Clamp to a visible range and pass to fragment
-        const jacobianClamped = clamp(jacobian, float(-1.0), float(1.5));
 
-        // ── Color uniforms ───────────────────────────────────────────────────────
-        const deepColor    = uniform(vec3(0.02, 0.10, 0.22));
-        const shallowColor = uniform(vec3(0.05, 0.38, 0.55));
-        const foamColor    = uniform(vec3(0.88, 0.94, 1.00));
-        const sunDir       = uniform(new THREE.Vector3(0.55, 0.70, -0.45).normalize());
-        const sunColor     = uniform(vec3(1.0, 0.97, 0.88));
+        // ── Cores e Profundidade (Estilo Sea of Thieves) ────────────────────────
+        const deepOceanColor = color('#051c2e'); // Azul marinho escuro
+        const shallowWaterColor = color('#0bb9d1'); // Ciano tropical brilhante
+        const foamColor = color('#f0f8ff'); // Branco levemente azulado
+        const sssColor = color('#149684'); // Ciano profundo para espelhamento nas cristas
 
-        const colorFn = wgslFn(`
-            fn oceanColor(
-                worldPos:  vec3f,
-                camPos:    vec3f,
-                n:         vec3f,
-                deep:      vec3f,
-                shallow:   vec3f,
-                foam:      vec3f,
-                sun:       vec3f,
-                sunCol:    vec3f,
-                t:         f32,
-                jacobian:  f32
-            ) -> vec3f {
-                let viewDir = normalize(camPos - worldPos);
-                let dist    = distance(camPos, worldPos);
+        // 1. Cor baseada na Altura da Onda (Y)
+        const heightFactor = smoothstep(-2.0, 2.0, positionLocal.y);
+        const waterBaseColor = mix(deepOceanColor, shallowWaterColor, heightFactor);
 
-                // Profundidade aparente — mais escuro ao longe
-                let depth = clamp(dist * 0.012, 0.0, 1.0);
-                var base  = mix(shallow, deep, depth);
+        // 2. Fresnel (Cor muda conforme o ângulo da câmera)
+        const viewDir = cameraPosition.sub(positionWorld).normalize();
+        const fresnel = smoothstep(0.0, 1.0, float(1.0).sub(dot(normalWorld, viewDir)).pow(4.0));
+        
+        // Mistura a cor base com uma tonalidade mais clara/verde no horizonte/ângulo raso
+        const colorWithFresnel = mix(waterBaseColor, shallowWaterColor.mul(1.2), fresnel.mul(0.5));
 
-                // Fresnel
-                let nv      = max(dot(n, viewDir), 0.0);
-                let fresnel = pow(1.0 - nv, 4.0);
+        // 3. Subsurface Scattering (SSS) nas cristas
+        const sunDir = uniform(new THREE.Vector3(0.55, 0.70, -0.45).normalize());
+        const sssFactor = dot(sunDir, normalWorld).max(0.0).mul(positionLocal.y.max(0.0).mul(0.2));
+        const colorWithSSS = colorWithFresnel.add(sssColor.mul(sssFactor));
 
-                // Reflexo do céu
-                let skyHoriz = vec3f(0.62, 0.82, 1.00);
-                let skyZen   = vec3f(0.18, 0.44, 0.72);
-                let skyRef   = mix(skyHoriz, skyZen, clamp(n.y, 0.0, 1.0));
-                base = mix(base, skyRef, fresnel * 0.55);
+        // 4. Adicionando o Jacobiano (Espuma)
+        const foamFactor = smoothstep(0.4, 0.0, jacobian); 
+        const finalColor = mix(colorWithSSS, foamColor, foamFactor);
 
-                // Subsurface scattering nas cristas
-                let sss    = max(0.0, dot(sun, n)) * max(0.0, worldPos.y * 0.18 + 0.1);
-                let sssCol = vec3f(0.05, 0.55, 0.45);
-                base = base + sssCol * sss * 0.35;
+        this.colorNode = finalColor;
 
-                // Especular principal (Blinn-Phong)
-                let h1    = normalize(viewDir + sun);
-                let spec1 = pow(max(dot(n, h1), 0.0), 160.0) * sunCol * 0.85;
-                let spec2 = pow(max(dot(n, h1), 0.0), 28.0)  * sunCol * 0.10;
-
-                // ── Espuma baseada no Jacobiano ──────────────────────────────────
-                // J < 0.4 → onda comprimida / quebrando → espuma
-                // smoothstep(0.4, -0.2, J): J=0.4→0, J=0.1→~0.5, J<0→1
-                let foamMask = smoothstep(0.40, -0.20, jacobian);
-
-                // Filamentos finos (lace) — variam no tempo para parecerem orgânicos
-                let lace      = abs(sin(worldPos.x * 3.2 + t * 1.3) * cos(worldPos.z * 2.9 + t * 1.0));
-                let laceFoam  = smoothstep(0.78, 0.95, lace) * 0.12 * foamMask;
-
-                return base + spec1 + spec2 + foam * (foamMask * 0.22 + laceFoam);
-            }
-        `);
-
-        this.colorNode = colorFn({
-            worldPos: positionWorld,
-            camPos:   cameraPosition,
-            n:        normalWorld,
-            deep:     deepColor,
-            shallow:  shallowColor,
-            foam:     foamColor,
-            sun:      sunDir,
-            sunCol:   sunColor,
-            t:        time,
-            jacobian: jacobianClamped,
-        }) as any;
-
-        // Opacidade depth-based
+        // ── Especulares e Transparência Adicionais ───────────────────────────────
         const distToCam = cameraPosition.sub(positionWorld).length();
         this.opacityNode = clamp(distToCam.mul(0.008).mul(float(0.98 - 0.82)).add(float(0.82)), float(0.8), float(1.0)) as any;
-        this.transparent = true;
     }
 }
+
