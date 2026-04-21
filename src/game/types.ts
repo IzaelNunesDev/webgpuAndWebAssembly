@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-export type ControlMode = 'onFoot' | 'shipHelm' | 'mastControl' | 'swimming' | 'freeCamera';
+export type ControlMode = 'onFoot' | 'shipHelm' | 'mastControl' | 'swimming' | 'freeCamera' | 'onNpcBoat' | 'npcHelm';
 
 export type WaveDefinition = {
     amp: number;

@@ -8,7 +8,7 @@ import { OceanMaterial } from './render/waterMaterial';
 import { hullMaterial, hullWaterLevel } from './render/hullMaterial';
 import { createRig, updateRig } from './game/sails';
 import { AvatarController } from './game/avatar';
-import { NpcBoat } from './game/npcBoat';
+import { NpcBoat, NPC_DECK_HEIGHT } from './game/npcBoat';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import './style.css';
 
@@ -73,6 +73,10 @@ class OceanEngine {
     private boatDeltaReady = false;
     private gameTime = 0;
     private npcBoat!: NpcBoat;
+    // NPC boat: player tracking on deck
+    private readonly prevNpcPos     = new THREE.Vector3();
+    private readonly prevNpcQ       = new THREE.Quaternion();
+    private npcDeltaReady = false;
 
     constructor() {
         this.renderer = this.createRenderer();
@@ -375,6 +379,7 @@ class OceanEngine {
         this.updateLook();
         this.updatePlayer(dt);
         this.updateShipControls(dt);
+        this.updateNpcControls();
         this.updateHelm(dt);
         this.updateWaterMode();
         this.syncAvatarState();
@@ -389,7 +394,19 @@ class OceanEngine {
         this.boatMesh.quaternion.slerp(this.boatQuaternion, 0.15);
 
         updateRig(this.rig, this.shipControls.sail, this.boatMesh);
+        // Snapshot NPC boat transform BEFORE physics update
+        if (this.mode === 'onNpcBoat') {
+            this.prevNpcPos.copy(this.npcBoat.root.position);
+            this.prevNpcQ.copy(this.npcBoat.root.quaternion);
+        }
+
         this.npcBoat.update(dt, this.gameTime);
+
+        // Apply NPC boat movement delta to player standing on deck
+        if (this.mode === 'onNpcBoat') {
+            this.applyNpcBoatDelta();
+        }
+
         this.drawCompass();
         this.pushControlsToWorker();
     }
@@ -549,8 +566,11 @@ class OceanEngine {
         this.avatar.rudder = this.rudderCurrent;
 
         // Estado visual dos braços por modo
-        if (this.mode === 'shipHelm') {
+        if (this.mode === 'shipHelm' || this.mode === 'npcHelm') {
             this.avatar.setState('helm');
+        } else if (this.mode === 'onNpcBoat') {
+            this.avatar.moving = hasMoveInput;
+            this.avatar.setState('deck');
         } else if (this.mode === 'swimming') {
             this.avatar.setState('swimming');
         } else {
@@ -565,34 +585,71 @@ class OceanEngine {
         }
 
         if (this.input.triggered('KeyE')) {
-            if (this.mode === 'shipHelm') {
+            if (this.mode === 'npcHelm') {
+                // Sai do leme → volta ao convés
+                this.mode = 'onNpcBoat';
+                this.npcBoat.rudder = 0;
+                this.npcDeltaReady = false;
+                this.playerWorld.copy(this.npcBoat.boardingPos(PLAYER_EYE_HEIGHT));
+                this.playerVelocity.set(0, 0, 0);
+                this.hud.setMode(this.mode);
+            } else if (this.mode === 'onNpcBoat') {
+                // No convés → assume o leme imediatamente (E no navio = leme)
+                this.mode = 'npcHelm';
+                this.hud.setMode(this.mode);
+            } else if (this.mode === 'shipHelm') {
                 this.mode = 'onFoot';
                 this.playerLocal.set(0, PLAYER_EYE_HEIGHT + 2.44, 8.5);
-                this.snapPlayerToBoat();          // ← FIX: sincroniza mundo com local
+                this.snapPlayerToBoat();
                 this.hud.setMode(this.mode);
             } else if (this.mode === 'mastControl') {
                 this.mode = 'onFoot';
                 this.playerLocal.set(0, PLAYER_EYE_HEIGHT + 2.04, -1.5);
-                this.snapPlayerToBoat();          // ← FIX
+                this.snapPlayerToBoat();
                 this.hud.setMode(this.mode);
             } else if (this.mode === 'swimming' && this.isNearBoatLadder()) {
+                // Sobe na escada do barco do jogador
                 this.mode = 'onFoot';
                 this.inWaterMode = false;
                 this.avatar.setState('deck');
                 this.scene.fog = new THREE.FogExp2('#7aa8c4', 0.012);
                 (this.renderer as any).toneMappingExposure = 1.0;
                 this.playerLocal.set(-1.5, PLAYER_EYE_HEIGHT + 2.44, 9.0);
-                this.snapPlayerToBoat();          // ← FIX
+                this.snapPlayerToBoat();
                 this.hud.setMode(this.mode);
             } else if (this.isNearMast()) {
                 this.mode = 'mastControl';
                 this.playerLocal.set(0, PLAYER_EYE_HEIGHT + 2.04, -1.5);
                 this.hud.setMode(this.mode);
             } else if (this.isNearHelm()) {
+                // Leme do barco do jogador tem prioridade sobre NPC
                 this.mode = 'shipHelm';
                 this.playerLocal.set(0, PLAYER_EYE_HEIGHT + 2.44, 8.5);
                 this.hud.setMode(this.mode);
+            } else if (this.isNearNpcBoat()) {
+                // Embarca no navio NPC
+                this.mode = 'onNpcBoat';
+                this.inWaterMode = false;
+                this.npcDeltaReady = false;
+                this.playerWorld.copy(this.npcBoat.boardingPos(PLAYER_EYE_HEIGHT));
+                this.playerVelocity.set(0, 0, 0);
+                this.scene.fog = new THREE.FogExp2('#7aa8c4', 0.012);
+                (this.renderer as any).toneMappingExposure = 1.0;
+                this.hud.setMode(this.mode);
             }
+        }
+
+        // G — pula no mar a partir do convés do NPC
+        if (this.input.triggered('KeyG') && this.mode === 'onNpcBoat') {
+            this.mode = 'swimming';
+            this.inWaterMode = true;
+            this.playerWorld.copy(this.npcBoat.root.position);
+            this.playerWorld.y = this.oceanSample.height + 0.5;
+            this.playerVelocity.set(0, 0, 0);
+            this.npcBoat.rudder   = 0;
+            this.npcBoat.throttle = 0;
+            this.avatar.setState('swimming');
+            this.hud.setMode(this.mode);
         }
 
         this.input.syncMode(this.mode);
@@ -614,6 +671,52 @@ class OceanEngine {
         this.targetFov = THREE.MathUtils.lerp(this.targetFov, desiredFov, dt * 8);
         this.camera.fov = this.targetFov;
         this.camera.updateProjectionMatrix();
+
+        if (this.mode === 'npcHelm') {
+            // Câmera acima do centro do barco, na altura do convés
+            const offset = new THREE.Vector3(0, NPC_DECK_HEIGHT + PLAYER_EYE_HEIGHT, 0)
+                .applyQuaternion(this.npcBoat.root.quaternion);
+            this.camera.position.copy(this.npcBoat.root.position).add(offset);
+            return;
+        }
+
+        if (this.mode === 'onNpcBoat') {
+            // Movimento WASD relativo à câmera
+            const speed = this.input.pressedNow('ShiftLeft') ? RUN_SPEED : WALK_SPEED;
+            this.tmpForward.set(0, 0, -1).applyEuler(this.camera.rotation);
+            this.tmpForward.y = 0;
+            if (this.tmpForward.lengthSq() > 0) this.tmpForward.normalize();
+            this.tmpRight.crossVectors(this.tmpForward, new THREE.Vector3(0, 1, 0)).normalize();
+
+            const fwd = this.input.axis('KeyS', 'KeyW');
+            const str = this.input.axis('KeyA', 'KeyD');
+            this.tmpMove.copy(this.tmpForward).multiplyScalar(fwd)
+                .addScaledVector(this.tmpRight, str);
+            if (this.tmpMove.lengthSq() > 0) this.tmpMove.normalize().multiplyScalar(speed);
+
+            this.playerVelocity.x = this.tmpMove.x;
+            this.playerVelocity.z = this.tmpMove.z;
+            this.playerVelocity.y -= 9.81 * dt;
+
+            const seconds = performance.now() / 1000;
+            // Phantom deck: flat floor that follows the boat's wave height + tilt
+            const deckFloor = this.npcBoat.deckFloorY() + PLAYER_EYE_HEIGHT;
+
+            if (this.npcBoat.isAboveDeck(this.playerWorld) &&
+                this.playerVelocity.y <= 0 &&
+                this.playerWorld.y <= deckFloor + 0.1) {
+                this.playerVelocity.y = 0;
+                this.playerWorld.y    = deckFloor;
+                this.lastGroundedAt   = seconds;
+            }
+            if (this.input.triggered('Space') && seconds - this.lastGroundedAt < COYOTE_TIME) {
+                this.playerVelocity.y = JUMP_IMPULSE;
+            }
+
+            this.playerWorld.addScaledVector(this.playerVelocity, dt);
+            this.camera.position.copy(this.playerWorld);
+            return;
+        }
 
         if (this.mode === 'shipHelm') {
             // Usa boatMesh (suavizado) em vez de boatPosition (bruto) para evitar jitter na câmera
@@ -762,6 +865,46 @@ class OceanEngine {
             ship: this.shipControls,
             playerMove: [moveX, moveY, moveZ],
         });
+    }
+
+    private applyNpcBoatDelta() {
+        const newPos = this.npcBoat.root.position;
+        const newQ   = this.npcBoat.root.quaternion;
+
+        if (!this.npcDeltaReady) {
+            this.prevNpcPos.copy(newPos);
+            this.prevNpcQ.copy(newQ);
+            this.npcDeltaReady = true;
+            return;
+        }
+
+        // Translate player with the boat
+        const dPos = newPos.clone().sub(this.prevNpcPos);
+        this.playerWorld.add(dPos);
+
+        // Rotate player around boat centre
+        const dQ = this.prevNpcQ.clone().invert().multiply(newQ);
+        if (Math.abs(dQ.w) < 0.9999) {
+            const rel = this.playerWorld.clone().sub(newPos);
+            rel.applyQuaternion(dQ);
+            this.playerWorld.copy(rel).add(newPos);
+        }
+
+        this.prevNpcPos.copy(newPos);
+        this.prevNpcQ.copy(newQ);
+    }
+
+    private updateNpcControls() {
+        if (this.mode !== 'npcHelm') {
+            this.npcBoat.rudder *= 0.85; // centres rudder when unmanned
+            return;
+        }
+        this.npcBoat.rudder   = this.input.axis('KeyD', 'KeyA');
+        this.npcBoat.throttle = this.input.axis('KeyS', 'KeyW');
+    }
+
+    private isNearNpcBoat() {
+        return this.npcBoat.canBoard(this.playerWorld);
     }
 
     private isNearMast() {

@@ -1,33 +1,24 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
 import { DEFAULT_WAVES } from './waves';
-import { MeshStandardNodeMaterial } from 'three/webgpu';
 
-const BASE = '/assets/boats/pirate/';
+const BASE        = '/assets/boats/npc/';
 const OCEAN_DEPTH = 10.0;
+const PROBE_DIST  = 20;
 
-// Node name key (without trailing _0, lowercase) → texture filename
-const TEXTURE_MAP: Record<string, string> = {
-    ship_rug:           'b235a5fcbe2e40f6b751f79beb1fa68e_RGB_Rug.png',
-    ship_wood_trims:    '64705f77da8448fd8f61c8a4878d5b6c_RGB_Wood_Trims.png',
-    ship_wood_planks:   '5ca1c55d2187494ea908622555baca49_RGB_Wood_Planks.png',
-    ship_wood_painted:  '53a8d42e47ed460d8c282a737f570fc8_RGB_Wood_Painted.png',
-    ship_sails:         '16c68dd1db694887b6ab9a3a1405b1ea_A_Sails.png',
-    ship_building_mats: 'd7f0991069ef470baa33e024288ca612_RGB_Building_Mats.png',
-    ship_emissive:      '451ae17a36e24a559e027655317d1e6b_RGB_Emissive.png',
-    ship_foliage_02:    '616e5610cd4946f79947f361002c8213_RGB_Foliage_02.png',
-    ship_foliage:       '9793da75063845df9c2e3e0588c76e19_RGB_Foliage.png',
-    ship_bits_bobs:     'af6229a83c0241f19f7be821c0517042_RGB_Bits_Bobs.png',
-};
+const MAX_SPEED    = 10;   // m/s at full throttle
+const TURN_RATE    = 0.45; // rad/s at full rudder
+const SPEED_INERTIA = 0.97;
 
-// Diorama-only nodes that don't make sense in an open ocean — hide them.
-// This also prevents them from inflating the bounding box used for auto-scaling.
-// (sky_sky_0 alone spans 30 900 model-units; sand tiles span 32 000 — both would
-//  crush the scale to ≈0.0007 and make the ship invisible.)
-const HIDE_KEYWORDS = [
-    'sky', 'sand', 'rock', 'water', 'terrain', 'ground', 'backdrop', 'environment', 
-    'no_shad', 'sand_caustics', 'sand_tile', 'rock_tile', 'rocks_unique', 'water_light'
-];
+// How high the phantom deck sits above the root origin.
+// Increase if the player sinks into the hull, decrease if they float above.
+export const NPC_DECK_HEIGHT = 10;
+
+// Horizontal radius (root-centred) used for boarding and deck collision.
+// Big enough to cover the full hull footprint regardless of model orientation.
+const BOARD_RADIUS = 42;
+const DECK_RADIUS  = 50; // slightly wider so player doesn't fall off the edge
 
 function sampleWaveHeight(x: number, z: number, time: number): number {
     let y = 0;
@@ -42,7 +33,18 @@ function sampleWaveHeight(x: number, z: number, time: number): number {
 
 export class NpcBoat {
     readonly root = new THREE.Group();
-    private loaded = false;
+
+    // External controls
+    rudder   = 0;
+    throttle = 0;
+
+    // Physics
+    private yaw   = 0;
+    private speed = 0;
+    private smoothY     = 0;
+    private smoothPitch = 0;
+    private smoothRoll  = 0;
+    private physicsReady = false;
 
     constructor(scene: THREE.Scene, x = 0, z = -20) {
         this.root.position.set(x, 0, z);
@@ -50,157 +52,149 @@ export class NpcBoat {
         this.load();
     }
 
+    // ── Public geometry helpers ────────────────────────────────────────────
+
+    /** Can the player board from this world position? (works before model loads) */
+    canBoard(worldPos: THREE.Vector3): boolean {
+        const dx = worldPos.x - this.root.position.x;
+        const dz = worldPos.z - this.root.position.z;
+        return dx * dx + dz * dz < BOARD_RADIUS * BOARD_RADIUS;
+    }
+
+    /** Is the player still above the deck footprint? (for floor collision) */
+    isAboveDeck(worldPos: THREE.Vector3): boolean {
+        const dx = worldPos.x - this.root.position.x;
+        const dz = worldPos.z - this.root.position.z;
+        return dx * dx + dz * dz < DECK_RADIUS * DECK_RADIUS;
+    }
+
+    /**
+     * World Y of the phantom deck surface.
+     * Tilts with the boat so the floor follows pitch and roll.
+     */
+    deckFloorY(): number {
+        // Take the "up" direction rotated by the boat quaternion.
+        // NPC_DECK_HEIGHT along that direction gives the deck world Y offset.
+        const up = new THREE.Vector3(0, NPC_DECK_HEIGHT, 0)
+            .applyQuaternion(this.root.quaternion);
+        return this.root.position.y + up.y;
+    }
+
+    /** World position to spawn the player when boarding. */
+    boardingPos(eyeHeight: number): THREE.Vector3 {
+        return new THREE.Vector3(
+            this.root.position.x,
+            this.deckFloorY() + eyeHeight,
+            this.root.position.z,
+        );
+    }
+
+    // ── Private loading ────────────────────────────────────────────────────
+
     private load() {
-        const texLoader = new THREE.TextureLoader();
-        const cache: Record<string, THREE.Texture> = {};
+        const mtlLoader = new MTLLoader();
+        mtlLoader.setPath(BASE);
 
-        const getTex = (file: string): THREE.Texture => {
-            if (!cache[file]) {
-                const t = texLoader.load(BASE + file);
-                t.colorSpace = THREE.SRGBColorSpace;
-                t.flipY = false; // GLTF UV convention
-                cache[file] = t;
+        mtlLoader.load('boat.mtl', (materials) => {
+            materials.preload();
+
+            for (const name of Object.keys(materials.materials)) {
+                const mat = materials.materials[name] as THREE.MeshPhongMaterial;
+                if (mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
             }
-            return cache[file];
-        };
 
-        new GLTFLoader().load(
-            BASE + 'boat.gltf',
-            (gltf) => {
-                const model = gltf.scene;
+            const objLoader = new OBJLoader();
+            objLoader.setMaterials(materials);
+            objLoader.setPath(BASE);
 
-                // ── 1. Hide diorama parts and apply ship textures ────────────────
+            objLoader.load('boat.obj', (model) => {
                 model.traverse((obj) => {
-                    const lc = obj.name.toLowerCase();
-                    
-                    // Hide any object whose name contains a diorama keyword
-                    const isDiorama = HIDE_KEYWORDS.some(kw => lc.includes(kw));
-                    if (isDiorama) {
-                        obj.visible = false;
-                        obj.traverse((child) => { child.visible = false; });
-                        return;
-                    }
                     if (!(obj instanceof THREE.Mesh)) return;
-
-                    const key = lc.replace(/_0$/, '');
-                    const texFile = TEXTURE_MAP[key];
-                    if (texFile) {
-                        const isSail = key === 'ship_sails';
-                        obj.material = new MeshStandardNodeMaterial({
-                            color:       0xffffff,
-                            map:         getTex(texFile),
-                            roughness:   0.82,
-                            metalness:   0.05,
-                            transparent: isSail,
-                            alphaTest:   isSail ? 0.35 : 0,
-                            side:        isSail ? THREE.DoubleSide : THREE.FrontSide,
-                        });
-                    }
                     obj.castShadow    = true;
                     obj.receiveShadow = true;
                 });
 
-                // ── 2. Auto-scale using ONLY visible ship meshes ─────────────────
-                // Cannot use Box3.setFromObject because Three.js traverses invisible
-                // children too — the diorama meshes span 32 000 model-units and would
-                // crush the computed scale to ~0.0007, making the ship invisible.
-                const shipBox = new THREE.Box3();
-                model.traverse((obj) => {
-                    if (obj instanceof THREE.Mesh && obj.visible) {
-                        const lc = obj.name.toLowerCase();
-                        const key = lc.replace(/_0$/, '');
-                        if (TEXTURE_MAP[key]) {
-                            shipBox.expandByObject(obj);
-                        }
-                    }
-                });
-
-                if (shipBox.isEmpty()) {
-                    console.warn('[NpcBoat] shipBox empty after texture filtering — falling back to visible meshes');
-                    model.traverse((obj) => {
-                        // Critical check: only include visible meshes that ARE NOT background/water
-                        if (obj instanceof THREE.Mesh && obj.visible) {
-                            const lc = obj.name.toLowerCase();
-                            const isBg = HIDE_KEYWORDS.some(kw => lc.includes(kw)) || lc.includes('mesh');
-                            if (!isBg) shipBox.expandByObject(obj);
-                        }
-                    });
-                }
-
-                if (shipBox.isEmpty()) {
-                    console.warn('[NpcBoat] Still empty — using full model bounding box (potentially inaccurate)');
-                    model.traverse((obj) => {
-                        if (obj instanceof THREE.Mesh && obj.visible) shipBox.expandByObject(obj);
-                    });
-                }
-
-                if (shipBox.isEmpty()) {
-                    console.error('[NpcBoat] No meshes found at all');
-                    this.root.add(model);
-                    this.loaded = true;
-                    return;
-                }
-
+                // Scale longest horizontal axis to 80 units
+                const box  = new THREE.Box3().setFromObject(model);
                 const size = new THREE.Vector3();
-                shipBox.getSize(size);
-
-                // Use the longest horizontal axis for length reference (~22 m target)
-                const longestHoriz = Math.max(size.x, size.z);
-                const scale = 80 / longestHoriz;
+                box.getSize(size);
+                const longest = Math.max(size.x, size.z);
+                const scale   = longest > 0 ? 80 / longest : 1;
                 model.scale.setScalar(scale);
 
-                // ── 3. Centre the model horizontally; place keel at y = 0 ────────
-                // Re-sample bbox after scaling
-                const scaledBox = new THREE.Box3();
-                model.traverse((obj) => {
-                    if (obj instanceof THREE.Mesh && obj.visible) {
-                        scaledBox.expandByObject(obj);
-                    }
-                });
-
-                const centre = new THREE.Vector3();
+                // Centre horizontally; keel at y = 0 (root origin)
+                const scaledBox = new THREE.Box3().setFromObject(model);
+                const centre    = new THREE.Vector3();
                 scaledBox.getCenter(centre);
-
-                // Shift horizontally to centre, then set y so keel touches y=0
                 model.position.x -= centre.x;
                 model.position.z -= centre.z;
-                model.position.y  = -scaledBox.min.y; // lift keel to waterline
+                model.position.y  = -scaledBox.min.y;
 
-                // Rotate so the ship's Z-axis (fore-aft) faces away from origin
+                // Bow points away from world origin
                 model.rotation.y = Math.PI;
 
                 this.root.add(model);
-                this.loaded = true;
 
-                const scaledSize = size.clone().multiplyScalar(scale);
-                console.log(`[NpcBoat] loaded — scale=${scale.toFixed(4)}, size=${scaledSize.toArray().map(v => v.toFixed(1)).join(' × ')} m`);
+                const s = size.clone().multiplyScalar(scale);
+                console.log(
+                    `[NpcBoat] loaded — scale=${scale.toFixed(3)} ` +
+                    `dims=${s.x.toFixed(1)}×${s.y.toFixed(1)}×${s.z.toFixed(1)}`
+                );
             },
             undefined,
-            (err) => console.error('[NpcBoat] GLTF load failed:', err)
-        );
+            (err) => console.error('[NpcBoat] OBJ failed:', err));
+        },
+        undefined,
+        (err) => console.error('[NpcBoat] MTL failed:', err));
     }
 
-    /** Call every frame from the main update loop. */
-    update(dt: number, time: number) {
-        if (!this.loaded) return;
+    // ── Update ────────────────────────────────────────────────────────────
 
+    update(dt: number, time: number) {
         const x = this.root.position.x;
         const z = this.root.position.z;
 
-        // Sample wave height at centre + 4 probes for pitch / roll
-        const d = 8;
-        const hf = sampleWaveHeight(x,     z - d, time);
-        const hb = sampleWaveHeight(x,     z + d, time);
-        const hl = sampleWaveHeight(x - d, z,     time);
-        const hr = sampleWaveHeight(x + d, z,     time);
-        const hy = (hf + hb + hl + hr) * 0.25;
+        if (!this.physicsReady) {
+            this.smoothY     = sampleWaveHeight(x, z, time);
+            this.smoothPitch = 0;
+            this.smoothRoll  = 0;
+            this.physicsReady = true;
+        }
 
-        this.root.position.y += (hy - this.root.position.y) * Math.min(1, dt * 3);
-        this.root.rotation.x += (-(hf - hb) / (d * 2) - this.root.rotation.x) * Math.min(1, dt * 2);
-        this.root.rotation.z += ( (hr - hl) / (d * 2) - this.root.rotation.z) * Math.min(1, dt * 2);
+        // ── Steering + movement ──────────────────────────────────────────
+        const effectiveRudder = this.rudder * Math.min(1, Math.abs(this.speed) / 2);
+        this.yaw += effectiveRudder * TURN_RATE * dt;
 
-        // Gentle slow drift so it doesn't look static
-        this.root.position.x += Math.sin(time * 0.07) * 0.002;
-        this.root.position.z += Math.cos(time * 0.05) * 0.002;
+        const targetSpeed = this.throttle * MAX_SPEED;
+        this.speed = this.speed * SPEED_INERTIA +
+                     (targetSpeed - this.speed * SPEED_INERTIA) * Math.min(1, dt * 1.2);
+
+        // Bow is in root-local -Z after the model's π rotation → move in -Z
+        this.root.position.x -= Math.sin(this.yaw) * this.speed * dt;
+        this.root.position.z -= Math.cos(this.yaw) * this.speed * dt;
+
+        // ── Wave physics ─────────────────────────────────────────────────
+        const nx = this.root.position.x;
+        const nz = this.root.position.z;
+        const d  = PROBE_DIST;
+
+        const hC = sampleWaveHeight(nx,     nz,     time);
+        const hF = sampleWaveHeight(nx,     nz - d, time); // bow
+        const hB = sampleWaveHeight(nx,     nz + d, time); // stern
+        const hL = sampleWaveHeight(nx - d, nz,     time);
+        const hR = sampleWaveHeight(nx + d, nz,     time);
+
+        const alphaY    = 1 - Math.exp(-1.2  * dt); // height: τ ≈ 0.8 s
+        const alphaTilt = 1 - Math.exp(-0.35 * dt); // tilt:   τ ≈ 2.9 s
+
+        this.smoothY     += (hC - this.smoothY) * alphaY;
+        this.smoothPitch += (-(hF - hB) / (2 * d) - this.smoothPitch) * alphaTilt;
+        this.smoothRoll  += ( (hR - hL) / (2 * d) - this.smoothRoll)  * alphaTilt;
+
+        this.root.rotation.order = 'YXZ';
+        this.root.position.y  = this.smoothY;
+        this.root.rotation.y  = this.yaw;
+        this.root.rotation.x  = this.smoothPitch;
+        this.root.rotation.z  = this.smoothRoll;
     }
 }

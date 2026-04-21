@@ -24,6 +24,8 @@ export class Hud {
             mastControl: 'No mastro',
             swimming:    'Nadando',
             freeCamera:  'Câmera livre',
+            onNpcBoat:   'No navio inimigo',
+            npcHelm:     'Leme do navio inimigo',
         };
 
         const hints: Record<ControlMode, string> = {
@@ -32,6 +34,8 @@ export class Hud {
             mastControl: 'W/S sobe/desce vela · Q -10% · A/D leme · E sai do mastro.',
             swimming:    'WASD nada · Shift acelera · Espaço sobe · C desce · E sobe na escada.',
             freeCamera:  'Z volta ao corpo · WASD/Shift navega · Bússola: rumo do barco.',
+            onNpcBoat:   'WASD anda · Espaço pula · E leme (se perto) · G pula no mar.',
+            npcHelm:     'W/S avança/recua · A/D vira · E volta ao convés.',
         };
 
         this.modeEl.textContent = labels[mode];

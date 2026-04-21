@@ -1,0 +1,42 @@
+# Blender 5.1.1 MTL File: 'Pirate Ship with Interior - Props and Guns and Textures - Vol 1 Low-poly 3D model.blend'
+# www.blender.org
+
+newmtl Body
+Ns 200.000000
+Ka 1.000000 1.000000 1.000000
+Ks 1.000000 1.000000 1.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 3
+map_Kd C:/Users/izael/Downloads/Pirate Ship with Interior - Props and Guns and Textures - Vol 1 Low-poly 3D model/mat0_c.jpg
+
+newmtl Body.001
+Ns 200.000000
+Ka 1.000000 1.000000 1.000000
+Ks 1.000000 1.000000 1.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 3
+map_Kd C:/Users/izael/Downloads/Pirate Ship with Interior - Props and Guns and Textures - Vol 1 Low-poly 3D model/mat0_c.jpg
+
+newmtl Iron&sali
+Ns 200.000000
+Ka 1.000000 1.000000 1.000000
+Ks 1.000000 1.000000 1.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 3
+map_Kd C:/Users/izael/Downloads/Pirate Ship with Interior - Props and Guns and Textures - Vol 1 Low-poly 3D model/mat2_c.jpg
+
+newmtl Rope
+Ns 200.000000
+Ka 1.000000 1.000000 1.000000
+Ks 1.000000 1.000000 1.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 3
+map_Kd C:/Users/izael/Downloads/Pirate Ship with Interior - Props and Guns and Textures - Vol 1 Low-poly 3D model/mat3_c.jpg
