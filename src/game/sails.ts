@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { WIND } from './waves';
 
 import { MeshStandardNodeMaterial } from 'three/webgpu';
-import { time, positionLocal, sin, uv, vec3, float } from 'three/tsl';
+import { positionLocal, time, sin, add, mul, sub, uv, vec3 } from 'three/tsl';
 
 export function createRig(boat: THREE.Group) {
   const mast = new THREE.Group();
@@ -13,31 +13,30 @@ export function createRig(boat: THREE.Group) {
   const woodMat = new MeshStandardNodeMaterial({ color: 0x3a2a1a, roughness: 0.8 });
   const ropeMat = new MeshStandardNodeMaterial({ color: 0x8a7050, roughness: 1.0 });
 
-  // ── Lógica de Animação das Velas (TSL) ───────────────────────────────────
-  
-  // A vela balança baseada no tempo e na posição X local
-  const windSpeed = time.mul(2.0);
-  const windRipple = sin(positionLocal.x.add(windSpeed)).mul(0.12);
+  // ── Wind Logic in TSL ──
+  // Ripple speed
+  const windSpeed = time.mul(3.0);
 
-  // Máscara UV: Apenas a parte inferior e as pontas balançam (UV.y baixo)
-  // No Three.js PlaneGeometry, UV.y=1 está no topo, UV.y=0 na base.
-  // Queremos que o topo (preso à verga) NÃO mova.
-  const windMask = float(1.0).sub(uv().y); 
+  // Creates a wave based on the X position of the vertex and time
+  const windRipple = sin(positionLocal.x.mul(2.0).add(windSpeed)).mul(0.15);
+
+  // UV Mask: The base of the sail (y=0) swings maximum, the top attached to the mast (y=1) swings zero.
+  const windMask = sub(1.0, uv().y);
   const displacement = windRipple.mul(windMask);
+  const newPosition = positionLocal.add(vec3(0, 0, displacement));
 
-  // Aplica o deslocamento no eixo Z local (perpendicular à vela)
-  const sailPositionNode = positionLocal.add(vec3(0, 0, displacement));
-
+  // Applies the material with the displacement node
   const sailMatMain = new MeshStandardNodeMaterial({
     color: 0xe8e4d8, side: THREE.DoubleSide, roughness: 0.95,
     transparent: true, opacity: 0.97,
-    positionNode: sailPositionNode
   });
+  sailMatMain.positionNode = newPosition; // <-- MAGIC HAPPENS HERE
+
   const sailMatJib = new MeshStandardNodeMaterial({
     color: 0xd8d2c0, side: THREE.DoubleSide, roughness: 0.95,
     transparent: true, opacity: 0.97,
-    positionNode: sailPositionNode
   });
+  sailMatJib.positionNode = newPosition; // Applies to the smaller sail as well
 
   // Mastro principal
   const mastPole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.11, 11), woodMat);

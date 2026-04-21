@@ -8,7 +8,8 @@ import { OceanMaterial } from './render/waterMaterial';
 import { hullMaterial, hullWaterLevel } from './render/hullMaterial';
 import { createRig, updateRig } from './game/sails';
 import { AvatarController } from './game/avatar';
-import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
+import { NpcBoat } from './game/npcBoat';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import './style.css';
 
 type RendererLike = {
@@ -70,6 +71,8 @@ class OceanEngine {
     private readonly prevBoatPos = new THREE.Vector3();
     private readonly prevBoatQ   = new THREE.Quaternion();
     private boatDeltaReady = false;
+    private gameTime = 0;
+    private npcBoat!: NpcBoat;
 
     constructor() {
         this.renderer = this.createRenderer();
@@ -187,6 +190,7 @@ class OceanEngine {
         }
 
         this.scene.add(this.boatMesh, this.oceanMesh);
+        this.npcBoat = new NpcBoat(this.scene, 0, -20);
         this.camera.position.copy(this.playerWorld);
     }
 
@@ -360,6 +364,7 @@ class OceanEngine {
         requestAnimationFrame(this.animate);
         this.timer.update();
         const dt = Math.min(this.timer.getDelta(), 0.033);
+        this.gameTime += dt;
         this.update(dt);
         this.renderer.render(this.scene, this.camera);
         this.input.endFrame();
@@ -384,6 +389,7 @@ class OceanEngine {
         this.boatMesh.quaternion.slerp(this.boatQuaternion, 0.15);
 
         updateRig(this.rig, this.shipControls.sail, this.boatMesh);
+        this.npcBoat.update(dt, this.gameTime);
         this.drawCompass();
         this.pushControlsToWorker();
     }
@@ -796,7 +802,7 @@ class OceanEngine {
         // Carrega um mapa de ambiente HDR para iluminação global e reflexos realistas
         const hdrUrl = 'https://threejs.org/examples/textures/equirectangular/blouberg_sunrise_2_1k.hdr';
         
-        new RGBELoader().load(hdrUrl, (texture) => {
+        new HDRLoader().load(hdrUrl, (texture) => {
             texture.mapping = THREE.EquirectangularReflectionMapping;
             this.scene.environment = texture;
             this.scene.background = texture;
